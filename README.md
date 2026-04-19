@@ -15,7 +15,7 @@ arr-game/
 
 ### Client
 - React 18
-- Mapbox GL JS
+- Leaflet + OpenStreetMap (완전 무료)
 - Zustand (상태관리)
 
 ### Server
@@ -55,7 +55,6 @@ npm run dev
 
 ### Client (.env)
 ```
-VITE_MAPBOX_TOKEN=your_mapbox_token
 VITE_API_URL=http://localhost:3001
 ```
 
