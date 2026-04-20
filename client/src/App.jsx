@@ -45,6 +45,8 @@ function MapController({ center }) {
 
 export default function App() {
   const [mapCenter, setMapCenter] = useState([37.5, 127.0])
+  const [locationRequested, setLocationRequested] = useState(false)
+  const [locationError, setLocationError] = useState(null)
 
   const {
     userLocation,
@@ -54,26 +56,28 @@ export default function App() {
     setUserLocation
   } = useGameStore()
 
-  useEffect(() => {
+  const requestLocation = () => {
+    setLocationRequested(true)
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const { longitude, latitude } = pos.coords
           setUserLocation({ longitude, latitude })
           setMapCenter([latitude, longitude])
+          setLocationError(null)
         },
         (err) => {
           console.error('Geolocation error:', err)
-          // 기본 위치 (서울) 설정
+          setLocationError('위치 권한이 거부되었습니다')
           setUserLocation({ longitude: 127.0, latitude: 37.5 })
         },
         { enableHighAccuracy: true, timeout: 10000 }
       )
     } else {
-      // Geolocation 미지원 시 기본 위치
+      setLocationError('이 브라우저는 위치 기능을 지원하지 않습니다')
       setUserLocation({ longitude: 127.0, latitude: 37.5 })
     }
-  }, [])
+  }
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
@@ -133,9 +137,62 @@ export default function App() {
         ))}
       </MapContainer>
 
+      {!userLocation && !locationRequested && (
+        <div style={styles.locationPrompt}>
+          <h2>Guardian AR</h2>
+          <p>위치 기반 수호신 전략 게임</p>
+          <button onClick={requestLocation} style={styles.locationBtn}>
+            위치 권한 허용하기
+          </button>
+        </div>
+      )}
+
+      {locationError && (
+        <div style={styles.errorMsg}>
+          {locationError}
+        </div>
+      )}
+
       <GuardianPanel />
       <TerritoryControls />
       <BattleModal />
     </div>
   )
+}
+
+const styles = {
+  locationPrompt: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    background: 'rgba(0,0,0,0.9)',
+    padding: 32,
+    borderRadius: 16,
+    color: 'white',
+    textAlign: 'center',
+    zIndex: 2000
+  },
+  locationBtn: {
+    marginTop: 20,
+    background: '#00ff88',
+    color: 'black',
+    border: 'none',
+    padding: '16px 32px',
+    borderRadius: 8,
+    fontSize: 16,
+    fontWeight: 'bold',
+    cursor: 'pointer'
+  },
+  errorMsg: {
+    position: 'absolute',
+    top: 20,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    background: '#ff4444',
+    color: 'white',
+    padding: '12px 24px',
+    borderRadius: 8,
+    zIndex: 2000
+  }
 }
