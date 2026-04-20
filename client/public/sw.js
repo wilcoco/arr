@@ -1,17 +1,37 @@
 // Service Worker for Guardian AR
 
-const CACHE_NAME = 'guardian-ar-v1';
+const CACHE_NAME = 'guardian-ar-v2';
 
-// 설치 시 캐시
+// 설치 시 - 즉시 활성화
 self.addEventListener('install', (event) => {
   console.log('Service Worker installed');
   self.skipWaiting();
 });
 
-// 활성화
+// 활성화 시 - 이전 캐시 삭제
 self.addEventListener('activate', (event) => {
   console.log('Service Worker activated');
-  event.waitUntil(clients.claim());
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames.map((cacheName) => {
+          if (cacheName !== CACHE_NAME) {
+            console.log('Deleting old cache:', cacheName);
+            return caches.delete(cacheName);
+          }
+        })
+      );
+    }).then(() => clients.claim())
+  );
+});
+
+// 네트워크 우선 전략 (항상 최신 버전 가져오기)
+self.addEventListener('fetch', (event) => {
+  event.respondWith(
+    fetch(event.request).catch(() => {
+      return caches.match(event.request);
+    })
+  );
 });
 
 // 푸시 알림 수신
