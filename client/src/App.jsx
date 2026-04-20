@@ -324,13 +324,17 @@ export default function App() {
 
         {/* 다른 플레이어들 - 직접 위치 사용 */}
         {(nearbyPlayers || []).map((player, idx) => {
-          const lat = player.location?.lat
-          const lng = player.location?.lng
-          if (!lat || !lng) return null
+          const lat = parseFloat(player.location?.lat)
+          const lng = parseFloat(player.location?.lng)
+          console.log('Rendering player marker:', player.username, 'at', lat, lng)
+          if (isNaN(lat) || isNaN(lng)) {
+            console.log('Invalid position for player:', player)
+            return null
+          }
           return (
             <Marker
               key={player.id}
-              position={[lat, lng + (idx * 0.0003)]}
+              position={[lat, lng + (idx * 0.0005)]}
               icon={createOtherPlayerIcon(player.guardian?.type, player.username)}
               eventHandlers={{
                 click: () => {
