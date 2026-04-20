@@ -12,92 +12,89 @@ export default function BattleModal() {
   if (!battleModalOpen || !currentBattle) return null
 
   const handleChoice = async (choice) => {
-    const result = await respondToBattle(choice)
-    if (result.result === 'alliance') {
-      alert('동맹이 체결되었습니다!')
-      closeBattleModal()
-    }
+    await respondToBattle(choice)
   }
 
+  // 영역 침입 감지됨
+  if (currentBattle.status === 'intrusion_detected') {
+    return (
+      <div style={styles.overlay}>
+        <div style={styles.modal}>
+          <h2 style={styles.title}>영역 발견!</h2>
+          <p style={styles.desc}>
+            <b>{currentBattle.territory?.username}</b>님의 영역에 진입했습니다.
+          </p>
+          <div style={styles.choices}>
+            <button
+              onClick={() => handleChoice('battle')}
+              style={styles.battleBtn}
+            >
+              전투
+            </button>
+            <button
+              onClick={() => handleChoice('alliance')}
+              style={styles.allianceBtn}
+            >
+              동맹 제안
+            </button>
+          </div>
+          <button onClick={closeBattleModal} style={styles.cancelBtn}>
+            무시하고 지나가기
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // 전투 완료
+  if (currentBattle.status === 'completed' && currentBattle.result) {
+    const result = currentBattle.result
+    const isWinner = result.winner === 'attacker' // 내가 공격자
+
+    return (
+      <div style={styles.overlay}>
+        <div style={styles.modal}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>
+            {isWinner ? '🎉' : '💀'}
+          </div>
+          <h2 style={{ color: isWinner ? '#00ff88' : '#ff4444' }}>
+            {isWinner ? '승리!' : '패배...'}
+          </h2>
+
+          <div style={styles.resultStats}>
+            <div>내 전투력: {result.attackerPower}</div>
+            <div>상대 전투력: {result.defenderPower}</div>
+          </div>
+
+          {isWinner && result.absorbed && (
+            <div style={styles.reward}>
+              <p>흡수한 능력치:</p>
+              <p>ATK +{result.absorbed.atk} / DEF +{result.absorbed.def} / HP +{result.absorbed.hp}</p>
+              <p style={{ color: '#ffd700' }}>+ 에너지 10 획득!</p>
+            </div>
+          )}
+
+          {!isWinner && (
+            <div style={styles.penalty}>
+              <p>영역을 빼앗겼습니다</p>
+              <p>고정 수호신이 파괴되었습니다</p>
+            </div>
+          )}
+
+          <button onClick={closeBattleModal} style={styles.closeBtn}>
+            확인
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // 대기 중
   return (
     <div style={styles.overlay}>
       <div style={styles.modal}>
-        <h2 style={styles.title}>영역 침입 감지!</h2>
-
-        {currentBattle.status === 'pending' && (
-          <>
-            <p style={styles.desc}>
-              상대방이 당신의 영역에 진입했습니다.
-              전투 또는 동맹을 선택하세요.
-            </p>
-            <div style={styles.choices}>
-              <button
-                onClick={() => handleChoice('battle')}
-                style={styles.battleBtn}
-              >
-                전투
-              </button>
-              <button
-                onClick={() => handleChoice('alliance')}
-                style={styles.allianceBtn}
-              >
-                동맹 제안
-              </button>
-            </div>
-          </>
-        )}
-
-        {currentBattle.status === 'in_progress' && (
-          <>
-            <div style={styles.battleArea}>
-              <div style={styles.fighter}>
-                <div style={{ fontSize: 48 }}>🦁</div>
-                <div>나</div>
-                <div style={styles.hp}>HP: {currentBattle.myHp || 100}</div>
-              </div>
-              <div style={styles.vs}>VS</div>
-              <div style={styles.fighter}>
-                <div style={{ fontSize: 48 }}>🤖</div>
-                <div>상대</div>
-                <div style={styles.hp}>HP: {currentBattle.enemyHp || 100}</div>
-              </div>
-            </div>
-            <button
-              onClick={useUltimate}
-              style={styles.ultimateBtn}
-              disabled={!currentBattle.ultimateReady}
-            >
-              궁극기 발동!
-            </button>
-          </>
-        )}
-
-        {currentBattle.status === 'completed' && (
-          <>
-            <div style={styles.result}>
-              {currentBattle.winner === 'me' ? (
-                <>
-                  <div style={{ fontSize: 48 }}>🎉</div>
-                  <div>승리!</div>
-                  <div style={styles.reward}>
-                    흡수한 능력치: ATK +{currentBattle.absorbed?.atk || 0}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div style={{ fontSize: 48 }}>💀</div>
-                  <div>패배...</div>
-                  <div style={styles.penalty}>
-                    영역을 빼앗겼습니다
-                  </div>
-                </>
-              )}
-            </div>
-            <button onClick={closeBattleModal} style={styles.closeBtn}>
-              확인
-            </button>
-          </>
-        )}
+        <h2>대기 중...</h2>
+        <p>상대방의 응답을 기다리고 있습니다.</p>
       </div>
     </div>
   )
@@ -114,19 +111,19 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 1000
+    zIndex: 3000
   },
   modal: {
     background: '#1a1a2e',
     padding: 32,
     borderRadius: 16,
     color: 'white',
-    maxWidth: 400,
+    maxWidth: 350,
     width: '90%',
     textAlign: 'center'
   },
   title: {
-    color: '#ff4444',
+    color: '#ffd700',
     marginBottom: 16
   },
   desc: {
@@ -135,7 +132,8 @@ const styles = {
   },
   choices: {
     display: 'flex',
-    gap: 16
+    gap: 16,
+    marginBottom: 16
   },
   battleBtn: {
     flex: 1,
@@ -144,7 +142,7 @@ const styles = {
     border: 'none',
     padding: '16px',
     borderRadius: 8,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     cursor: 'pointer'
   },
@@ -155,56 +153,41 @@ const styles = {
     border: 'none',
     padding: '16px',
     borderRadius: 8,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     cursor: 'pointer'
   },
-  battleArea: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    margin: '24px 0'
-  },
-  fighter: {
-    textAlign: 'center'
-  },
-  vs: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#ff4444'
-  },
-  hp: {
-    color: '#00ff88',
-    marginTop: 8
-  },
-  ultimateBtn: {
-    width: '100%',
-    background: 'linear-gradient(45deg, #ff6b6b, #ffd93d)',
-    color: 'black',
-    border: 'none',
-    padding: '16px',
+  cancelBtn: {
+    background: 'transparent',
+    color: '#888',
+    border: '1px solid #444',
+    padding: '10px 20px',
     borderRadius: 8,
-    fontSize: 18,
-    fontWeight: 'bold',
-    cursor: 'pointer'
+    cursor: 'pointer',
+    width: '100%'
   },
-  result: {
-    margin: '24px 0'
+  resultStats: {
+    background: '#333',
+    padding: 16,
+    borderRadius: 8,
+    margin: '16px 0'
   },
   reward: {
     color: '#00ff88',
-    marginTop: 12
+    margin: '16px 0'
   },
   penalty: {
     color: '#ff4444',
-    marginTop: 12
+    margin: '16px 0'
   },
   closeBtn: {
-    background: '#333',
-    color: 'white',
+    background: '#00ff88',
+    color: 'black',
     border: 'none',
     padding: '12px 32px',
     borderRadius: 8,
-    cursor: 'pointer'
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    marginTop: 16
   }
 }

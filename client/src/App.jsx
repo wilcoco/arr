@@ -52,9 +52,17 @@ export default function App() {
     userLocation,
     guardian,
     territories,
+    nearbyTerritories,
     expandingTerritory,
-    setUserLocation
+    setUserLocation,
+    loadUserData,
+    updateLocation
   } = useGameStore()
+
+  // 초기 데이터 로드
+  useEffect(() => {
+    loadUserData()
+  }, [])
 
   const requestLocation = () => {
     setLocationRequested(true)
@@ -65,6 +73,8 @@ export default function App() {
           setUserLocation({ longitude, latitude })
           setMapCenter([latitude, longitude])
           setLocationError(null)
+          // 서버에 위치 업데이트
+          updateLocation(latitude, longitude)
         },
         (err) => {
           console.error('Geolocation error:', err)
@@ -72,6 +82,17 @@ export default function App() {
           setUserLocation({ longitude: 127.0, latitude: 37.5 })
         },
         { enableHighAccuracy: true, timeout: 10000 }
+      )
+
+      // 위치 변경 감시
+      navigator.geolocation.watchPosition(
+        (pos) => {
+          const { longitude, latitude } = pos.coords
+          setUserLocation({ longitude, latitude })
+          updateLocation(latitude, longitude)
+        },
+        () => {},
+        { enableHighAccuracy: true }
       )
     } else {
       setLocationError('이 브라우저는 위치 기능을 지원하지 않습니다')
@@ -122,15 +143,29 @@ export default function App() {
           />
         )}
 
-        {/* 확보된 영역들 */}
+        {/* 내 영역들 */}
         {territories.map(t => (
           <Circle
             key={t.id}
             center={[t.center.lat, t.center.lng]}
             radius={t.radius}
             pathOptions={{
-              color: t.isOwn ? '#00ff88' : '#ff4444',
-              fillColor: t.isOwn ? '#00ff88' : '#ff4444',
+              color: '#00ff88',
+              fillColor: '#00ff88',
+              fillOpacity: 0.2
+            }}
+          />
+        ))}
+
+        {/* 다른 플레이어 영역들 */}
+        {nearbyTerritories.map(t => (
+          <Circle
+            key={t.id}
+            center={[t.center.lat, t.center.lng]}
+            radius={t.radius}
+            pathOptions={{
+              color: '#ff4444',
+              fillColor: '#ff4444',
               fillOpacity: 0.2
             }}
           />
