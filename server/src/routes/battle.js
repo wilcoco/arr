@@ -403,4 +403,213 @@ router.get('/pending/:userId', async (req, res) => {
   }
 })
 
+// 플레이어 직접 전투 요청
+router.post('/request-player', async (req, res) => {
+  try {
+    const { attackerId, defenderId, choice } = req.body
+
+    // 방어막 확인
+    const defender = await db.query(
+      'SELECT shield_until FROM users WHERE id = $1',
+      [defenderId]
+    )
+
+    if (defender.rows[0]?.shield_until && new Date(defender.rows[0].shield_until) > new Date()) {
+      return res.json({
+        success: false,
+        error: '상대방이 방어막 상태입니다'
+      })
+    }
+
+    if (choice === 'alliance') {
+      // 동맹 제안 생성
+      const existing = await db.query(
+        `SELECT id FROM alliances
+         WHERE ((user_id_1 = $1 AND user_id_2 = $2) OR (user_id_1 = $2 AND user_id_2 = $1))
+           AND active = true`,
+        [attackerId, defenderId]
+      )
+
+      if (existing.rows.length > 0) {
+        return res.json({ success: false, error: '이미 동맹 관계입니다' })
+      }
+
+      await db.query(
+        `INSERT INTO alliances (user_id_1, user_id_2, active)
+         VALUES ($1, $2, true)`,
+        [attackerId, defenderId]
+      )
+
+      return res.json({ success: true, result: 'alliance_proposed' })
+    }
+
+    // 전투 생성
+    const result = await db.query(
+      `INSERT INTO battles (attacker_id, defender_id, status, attacker_choice)
+       VALUES ($1, $2, 'direct_battle', 'battle')
+       RETURNING *`,
+      [attackerId, defenderId]
+    )
+
+    res.json({
+      success: true,
+      battleId: result.rows[0].id
+    })
+  } catch (err) {
+    console.error('Request player battle error:', err)
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+// 플레이어 직접 전투 실행
+router.post('/execute-player', async (req, res) => {
+  try {
+    const { battleId } = req.body
+
+    const battle = await db.query('SELECT * FROM battles WHERE id = $1', [battleId])
+    if (battle.rows.length === 0) {
+      return res.status(404).json({ success: false, error: '전투를 찾을 수 없습니다' })
+    }
+
+    const b = battle.rows[0]
+
+    const attacker = await db.query(
+      'SELECT g.*, u.username FROM guardians g JOIN users u ON g.user_id = u.id WHERE g.user_id = $1',
+      [b.attacker_id]
+    )
+    const defender = await db.query(
+      'SELECT g.*, u.username FROM guardians g JOIN users u ON g.user_id = u.id WHERE g.user_id = $1',
+      [b.defender_id]
+    )
+
+    const attackerStats = attacker.rows[0] || { atk: 10, def: 10, hp: 100 }
+    const defenderStats = defender.rows[0] || { atk: 10, def: 10, hp: 100 }
+
+    let attackerPower = attackerStats.atk * (0.8 + Math.random() * 0.4)
+    let defenderPower = defenderStats.def * (0.8 + Math.random() * 0.4)
+
+    const winner = attackerPower > defenderPower ? 'attacker' : 'defender'
+    let absorbed = null
+
+    if (winner === 'attacker') {
+      const absorbRate = (attackerStats.abs || 10) / 100
+      absorbed = {
+        atk: Math.floor((defenderStats.atk || 0) * absorbRate),
+        def: Math.floor((defenderStats.def || 0) * absorbRate),
+        hp: Math.floor((defenderStats.hp || 0) * absorbRate)
+      }
+
+      await db.query(
+        `UPDATE guardians SET atk = atk + $1, def = def + $2, hp = hp + $3 WHERE user_id = $4`,
+        [absorbed.atk, absorbed.def, absorbed.hp, b.attacker_id]
+      )
+      await db.query(
+        `UPDATE guardians SET atk = GREATEST(1, atk - $1), def = GREATEST(1, def - $2), hp = GREATEST(1, hp - $3) WHERE user_id = $4`,
+        [absorbed.atk, absorbed.def, absorbed.hp, b.defender_id]
+      )
+      await db.query(`UPDATE users SET energy_currency = energy_currency + 5 WHERE id = $1`, [b.attacker_id])
+    }
+
+    await db.query(
+      `UPDATE battles SET status = 'completed', winner_id = $1, attacker_power = $2, defender_power = $3, absorbed_stats = $4 WHERE id = $5`,
+      [winner === 'attacker' ? b.attacker_id : b.defender_id, Math.round(attackerPower), Math.round(defenderPower), JSON.stringify(absorbed), battleId]
+    )
+
+    res.json({
+      success: true,
+      winner,
+      attackerPower: Math.round(attackerPower),
+      defenderPower: Math.round(defenderPower),
+      absorbed,
+      battleDetails: {
+        attacker: { name: attackerStats.username, type: attackerStats.type, stats: { atk: attackerStats.atk, def: attackerStats.def, hp: attackerStats.hp } },
+        defender: { name: defenderStats.username, type: defenderStats.type, stats: { atk: defenderStats.atk, def: defenderStats.def, hp: defenderStats.hp } },
+        fixedGuardians: [],
+        allyDefenders: [],
+        isJointDefense: false
+      }
+    })
+  } catch (err) {
+    console.error('Execute player battle error:', err)
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+// 고정 수호신 직접 공격
+router.post('/attack-fixed-guardian', async (req, res) => {
+  try {
+    const { attackerId, fixedGuardianId } = req.body
+
+    const fg = await db.query(
+      `SELECT fg.*, u.username as owner_name, t.user_id as territory_owner_id
+       FROM fixed_guardians fg
+       JOIN users u ON fg.user_id = u.id
+       JOIN territories t ON fg.territory_id = t.id
+       WHERE fg.id = $1`,
+      [fixedGuardianId]
+    )
+
+    if (fg.rows.length === 0) {
+      return res.status(404).json({ success: false, error: '고정 수호신을 찾을 수 없습니다' })
+    }
+
+    const targetFG = fg.rows[0]
+
+    const attacker = await db.query(
+      'SELECT g.*, u.username FROM guardians g JOIN users u ON g.user_id = u.id WHERE g.user_id = $1',
+      [attackerId]
+    )
+
+    const attackerStats = attacker.rows[0] || { atk: 10 }
+
+    let attackerPower = attackerStats.atk * (0.8 + Math.random() * 0.4)
+    let defenderPower = targetFG.def * (0.8 + Math.random() * 0.4)
+
+    const winner = attackerPower > defenderPower ? 'attacker' : 'defender'
+    let absorbed = null
+
+    if (winner === 'attacker') {
+      const absorbRate = (attackerStats.abs || 10) / 100
+      absorbed = {
+        atk: Math.floor(targetFG.atk * absorbRate),
+        def: Math.floor(targetFG.def * absorbRate),
+        hp: Math.floor(targetFG.hp * absorbRate)
+      }
+
+      await db.query(
+        `UPDATE guardians SET atk = atk + $1, def = def + $2, hp = hp + $3 WHERE user_id = $4`,
+        [absorbed.atk, absorbed.def, absorbed.hp, attackerId]
+      )
+
+      // 고정 수호신 파괴
+      await db.query('DELETE FROM fixed_guardians WHERE id = $1', [fixedGuardianId])
+    } else {
+      // 공격자 데미지 (HP 감소)
+      await db.query(
+        `UPDATE guardians SET hp = GREATEST(1, hp - $1) WHERE user_id = $2`,
+        [Math.floor(targetFG.atk * 0.5), attackerId]
+      )
+    }
+
+    res.json({
+      success: true,
+      winner,
+      attackerPower: Math.round(attackerPower),
+      defenderPower: Math.round(defenderPower),
+      absorbed,
+      battleDetails: {
+        attacker: { name: attackerStats.username, type: attackerStats.type, stats: { atk: attackerStats.atk, def: attackerStats.def, hp: attackerStats.hp } },
+        defender: { name: targetFG.owner_name + '의 고정수호신', type: targetFG.guardian_type, stats: { atk: targetFG.atk, def: targetFG.def, hp: targetFG.hp } },
+        fixedGuardians: [{ type: targetFG.guardian_type, stats: { atk: targetFG.atk, def: targetFG.def, hp: targetFG.hp } }],
+        allyDefenders: [],
+        isJointDefense: false,
+        isFixedGuardianBattle: true
+      }
+    })
+  } catch (err) {
+    console.error('Attack fixed guardian error:', err)
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
 module.exports = router

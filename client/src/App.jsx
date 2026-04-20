@@ -136,7 +136,9 @@ export default function App() {
     setUserLocation,
     setVisitorId,
     loadUserData,
-    updateLocation
+    updateLocation,
+    initiatePlayerEncounter,
+    initiateFixedGuardianAttack
   } = useGameStore()
 
   // 초기 데이터 로드 (visitorId가 있을 때만)
@@ -271,21 +273,39 @@ export default function App() {
           />
         ))}
 
-        {/* 다른 플레이어들 (겹침 방지 배열) */}
+        {/* 다른 플레이어들 (겹침 방지 배열) - 클릭하면 전투/협력 선택 */}
         {spreadPlayers.map(player => (
           <Marker
             key={player.id}
             position={[player.spreadPosition.lat, player.spreadPosition.lng]}
             icon={createOtherPlayerIcon(player.guardian?.type, player.username)}
+            eventHandlers={{
+              click: () => {
+                if (guardian) {
+                  initiatePlayerEncounter(player)
+                } else {
+                  alert('먼저 수호신을 생성하세요!')
+                }
+              }
+            }}
           />
         ))}
 
-        {/* 다른 플레이어의 고정 수호신들 (겹침 방지 배열) */}
+        {/* 다른 플레이어의 고정 수호신들 (겹침 방지 배열) - 클릭하면 공격 선택 */}
         {spreadFixedGuardians.map(fg => (
           <Marker
             key={`fixed-${fg.id}`}
             position={[fg.spreadPosition.lat, fg.spreadPosition.lng]}
             icon={createFixedGuardianIcon(fg.type, fg.owner)}
+            eventHandlers={{
+              click: () => {
+                if (guardian) {
+                  initiateFixedGuardianAttack(fg)
+                } else {
+                  alert('먼저 수호신을 생성하세요!')
+                }
+              }
+            }}
           />
         ))}
       </MapContainer>

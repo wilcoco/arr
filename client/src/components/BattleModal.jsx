@@ -83,6 +83,84 @@ export default function BattleModal() {
     )
   }
 
+  // 플레이어 직접 조우
+  if (currentBattle.status === 'player_encounter' && battlePhase === 'choice') {
+    const player = currentBattle.targetPlayer
+    return (
+      <div style={styles.overlay}>
+        <div style={styles.modal}>
+          <div style={styles.alertIcon}>
+            {player.guardian?.type === 'animal' ? '🦁' :
+             player.guardian?.type === 'robot' ? '🤖' :
+             player.guardian?.type === 'aircraft' ? '✈️' : '👤'}
+          </div>
+          <h2 style={styles.title}>플레이어 발견!</h2>
+          <p style={styles.desc}>
+            <b style={{ color: '#ff4444' }}>{player.username}</b>
+          </p>
+
+          {player.guardian && (
+            <div style={styles.targetStats}>
+              <div>ATK: {player.guardian.stats?.atk || '?'}</div>
+              <div>DEF: {player.guardian.stats?.def || '?'}</div>
+              <div>HP: {player.guardian.stats?.hp || '?'}</div>
+            </div>
+          )}
+
+          <div style={styles.choices}>
+            <button onClick={() => handleChoice('battle')} style={styles.battleBtn}>
+              <span style={{ fontSize: 24 }}>⚔️</span>
+              <span>전투</span>
+            </button>
+            <button onClick={() => handleChoice('alliance')} style={styles.allianceBtn}>
+              <span style={{ fontSize: 24 }}>🤝</span>
+              <span>동맹 제안</span>
+            </button>
+          </div>
+
+          <button onClick={closeBattleModal} style={styles.cancelBtn}>
+            무시하기
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // 고정 수호신 직접 공격
+  if (currentBattle.status === 'fixed_guardian_attack' && battlePhase === 'choice') {
+    const fg = currentBattle.targetFixedGuardian
+    return (
+      <div style={styles.overlay}>
+        <div style={styles.modal}>
+          <div style={styles.alertIcon}>
+            {fg.type === 'production' ? '⚙️' : '🛡️'}
+          </div>
+          <h2 style={styles.title}>고정 수호신 발견!</h2>
+          <p style={styles.desc}>
+            <b style={{ color: '#4488ff' }}>{fg.owner}</b>의 {fg.type === 'production' ? '생산형' : '방어형'} 수호신
+          </p>
+
+          <div style={styles.targetStats}>
+            <div>ATK: {fg.stats?.atk || 0}</div>
+            <div>DEF: {fg.stats?.def || 0}</div>
+            <div>HP: {fg.stats?.hp || 0}</div>
+          </div>
+
+          <div style={styles.choices}>
+            <button onClick={() => handleChoice('battle')} style={styles.battleBtn}>
+              <span style={{ fontSize: 24 }}>⚔️</span>
+              <span>공격</span>
+            </button>
+          </div>
+
+          <button onClick={closeBattleModal} style={styles.cancelBtn}>
+            무시하기
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   // 전투 애니메이션
   if (battlePhase === 'animating' && currentBattle.result) {
     const result = currentBattle.result
@@ -222,8 +300,20 @@ export default function BattleModal() {
 
           {!isWinner && (
             <div style={styles.penalty}>
-              <p>영역을 빼앗겼습니다</p>
-              <p>고정 수호신이 파괴되었습니다</p>
+              {details.isFixedGuardianBattle ? (
+                <p>공격 실패! HP가 감소했습니다.</p>
+              ) : (
+                <>
+                  <p>영역을 빼앗겼습니다</p>
+                  <p>고정 수호신이 파괴되었습니다</p>
+                </>
+              )}
+            </div>
+          )}
+
+          {isWinner && details.isFixedGuardianBattle && (
+            <div style={{ color: '#ffd700', marginBottom: 12 }}>
+              고정 수호신을 파괴했습니다!
             </div>
           )}
 
@@ -309,6 +399,16 @@ const styles = {
     borderRadius: 8,
     marginBottom: 20,
     fontSize: 14
+  },
+  targetStats: {
+    display: 'flex',
+    justifyContent: 'space-around',
+    background: 'rgba(255,255,255,0.1)',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 20,
+    fontSize: 14,
+    fontWeight: 'bold'
   },
   choices: {
     display: 'flex',

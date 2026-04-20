@@ -286,13 +286,134 @@ export const useGameStore = create((set, get) => ({
     currentBattle: null
   }),
 
+  // 플레이어 직접 전투/협력 요청
+  initiatePlayerEncounter: (player) => {
+    set({
+      currentBattle: {
+        status: 'player_encounter',
+        targetPlayer: player
+      },
+      battleModalOpen: true
+    })
+  },
+
+  // 고정 수호신 직접 공격
+  initiateFixedGuardianAttack: (fixedGuardian) => {
+    set({
+      currentBattle: {
+        status: 'fixed_guardian_attack',
+        targetFixedGuardian: fixedGuardian
+      },
+      battleModalOpen: true
+    })
+  },
+
   // 전투/동맹 선택
   respondToBattle: async (choice) => {
     const { currentBattle, userId } = get()
     if (!currentBattle) return
 
     try {
-      // 전투 요청 생성 (침입자가 요청)
+      // 플레이어 직접 조우
+      if (currentBattle.status === 'player_encounter') {
+        const targetPlayer = currentBattle.targetPlayer
+
+        const reqRes = await fetch(`${API_URL}/api/battle/request-player`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            attackerId: userId,
+            defenderId: targetPlayer.id,
+            choice
+          })
+        })
+
+        const reqData = await reqRes.json()
+
+        if (!reqData.success) {
+          alert(reqData.error || '요청 실패')
+          set({ battleModalOpen: false, currentBattle: null })
+          return reqData
+        }
+
+        if (choice === 'alliance') {
+          alert('동맹 제안을 보냈습니다!')
+          set({ battleModalOpen: false, currentBattle: null })
+          return reqData
+        }
+
+        // 전투 실행
+        const execRes = await fetch(`${API_URL}/api/battle/execute-player`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ battleId: reqData.battleId })
+        })
+
+        const execData = await execRes.json()
+
+        set({
+          currentBattle: {
+            ...currentBattle,
+            status: 'animating',
+            result: execData
+          }
+        })
+
+        setTimeout(() => {
+          set({
+            currentBattle: { ...currentBattle, status: 'completed', result: execData }
+          })
+          get().loadUserData()
+        }, 4000)
+
+        return execData
+      }
+
+      // 고정 수호신 직접 공격
+      if (currentBattle.status === 'fixed_guardian_attack') {
+        const targetFG = currentBattle.targetFixedGuardian
+
+        const res = await fetch(`${API_URL}/api/battle/attack-fixed-guardian`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            attackerId: userId,
+            fixedGuardianId: targetFG.id
+          })
+        })
+
+        const data = await res.json()
+
+        if (!data.success) {
+          alert(data.error || '공격 실패')
+          set({ battleModalOpen: false, currentBattle: null })
+          return data
+        }
+
+        set({
+          currentBattle: {
+            ...currentBattle,
+            status: 'animating',
+            result: data
+          }
+        })
+
+        setTimeout(() => {
+          set({
+            currentBattle: { ...currentBattle, status: 'completed', result: data }
+          })
+          get().loadUserData()
+          // 주변 정보 새로고침
+          const { userLocation } = get()
+          if (userLocation) {
+            get().updateLocation(userLocation.latitude, userLocation.longitude)
+          }
+        }, 4000)
+
+        return data
+      }
+
+      // 영역 침입 (기존 로직)
       if (currentBattle.status === 'intrusion_detected') {
         const reqRes = await fetch(`${API_URL}/api/battle/request`, {
           method: 'POST',
