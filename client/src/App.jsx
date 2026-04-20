@@ -56,15 +56,22 @@ export default function App() {
 
   useEffect(() => {
     if (navigator.geolocation) {
-      navigator.geolocation.watchPosition(
+      navigator.geolocation.getCurrentPosition(
         (pos) => {
           const { longitude, latitude } = pos.coords
           setUserLocation({ longitude, latitude })
           setMapCenter([latitude, longitude])
         },
-        (err) => console.error('Geolocation error:', err),
-        { enableHighAccuracy: true }
+        (err) => {
+          console.error('Geolocation error:', err)
+          // 기본 위치 (서울) 설정
+          setUserLocation({ longitude: 127.0, latitude: 37.5 })
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
       )
+    } else {
+      // Geolocation 미지원 시 기본 위치
+      setUserLocation({ longitude: 127.0, latitude: 37.5 })
     }
   }, [])
 

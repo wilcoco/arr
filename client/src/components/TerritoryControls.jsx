@@ -64,7 +64,8 @@ const styles = {
     color: 'white',
     display: 'flex',
     flexDirection: 'column',
-    gap: 8
+    gap: 8,
+    zIndex: 1000
   },
   radiusDisplay: {
     textAlign: 'center',

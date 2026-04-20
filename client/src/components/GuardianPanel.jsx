@@ -89,7 +89,8 @@ const styles = {
     padding: 16,
     borderRadius: 12,
     color: 'white',
-    minWidth: 150
+    minWidth: 150,
+    zIndex: 1000
   },
   header: {
     display: 'flex',
@@ -120,7 +121,8 @@ const styles = {
     background: 'rgba(0,0,0,0.9)',
     padding: 20,
     borderRadius: 12,
-    color: 'white'
+    color: 'white',
+    zIndex: 1000
   },
   typeList: {
     display: 'flex',
