@@ -45,6 +45,19 @@ const createOtherPlayerIcon = (type, username) => L.divIcon({
   iconAnchor: [25, 40]
 })
 
+// 고정 수호신 아이콘 (방어형: 파란색, 생산형: 노란색)
+const createFixedGuardianIcon = (type, owner) => L.divIcon({
+  className: 'fixed-guardian-marker',
+  html: `<div style="text-align:center;">
+    <div style="font-size:24px;filter:drop-shadow(0 0 6px ${type === 'production' ? '#ffd700' : '#4488ff'});">${
+      type === 'production' ? '⚙️' : '🛡️'
+    }</div>
+    <div style="font-size:9px;color:white;background:${type === 'production' ? '#ffd700' : '#4488ff'};padding:1px 4px;border-radius:3px;color:black;">${owner}</div>
+  </div>`,
+  iconSize: [40, 40],
+  iconAnchor: [20, 35]
+})
+
 // 맵 중심 이동 컴포넌트
 function MapController({ center }) {
   const map = useMap()
@@ -70,6 +83,7 @@ export default function App() {
     territories,
     nearbyTerritories,
     nearbyPlayers,
+    nearbyFixedGuardians,
     expandingTerritory,
     setUserLocation,
     setVisitorId,
@@ -197,6 +211,15 @@ export default function App() {
             key={player.id}
             position={[player.location.lat, player.location.lng]}
             icon={createOtherPlayerIcon(player.guardian?.type, player.username)}
+          />
+        ))}
+
+        {/* 다른 플레이어의 고정 수호신들 (플레이어 오프라인이어도 표시) */}
+        {nearbyFixedGuardians && nearbyFixedGuardians.map(fg => (
+          <Marker
+            key={`fixed-${fg.id}`}
+            position={[fg.position.lat, fg.position.lng]}
+            icon={createFixedGuardianIcon(fg.type, fg.owner)}
           />
         ))}
       </MapContainer>

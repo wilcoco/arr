@@ -26,6 +26,9 @@ export const useGameStore = create((set, get) => ({
   // 주변 플레이어
   nearbyPlayers: [],
 
+  // 주변 고정 수호신
+  nearbyFixedGuardians: [],
+
   // 전투
   currentBattle: null,
   battleModalOpen: false,
@@ -132,6 +135,13 @@ export const useGameStore = create((set, get) => ({
         )
         const playersData = await playersRes.json()
         set({ nearbyPlayers: playersData.players || [] })
+
+        // 주변 고정 수호신 조회
+        const fixedRes = await fetch(
+          `${API_URL}/api/territory/nearby-fixed-guardians?lat=${lat}&lng=${lng}&radius=1000&excludeUserId=${userId}`
+        )
+        const fixedData = await fixedRes.json()
+        set({ nearbyFixedGuardians: fixedData.fixedGuardians || [] })
 
         // 침입 체크
         const intrusionRes = await fetch(`${API_URL}/api/territory/check-intrusion`, {

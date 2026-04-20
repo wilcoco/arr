@@ -193,4 +193,41 @@ router.post('/check-intrusion', async (req, res) => {
   }
 })
 
+// 주변 고정 수호신 조회
+router.get('/nearby-fixed-guardians', async (req, res) => {
+  try {
+    const { lat, lng, radius, excludeUserId } = req.query
+
+    const degreeRadius = parseFloat(radius || 1000) / 111000
+
+    const result = await db.query(
+      `SELECT fg.*, u.username, t.center_lat, t.center_lng, t.radius as territory_radius
+       FROM fixed_guardians fg
+       JOIN users u ON fg.user_id = u.id
+       JOIN territories t ON fg.territory_id = t.id
+       WHERE fg.user_id != $4
+         AND fg.position_lat BETWEEN $1 - $3 AND $1 + $3
+         AND fg.position_lng BETWEEN $2 - $3 AND $2 + $3
+       ORDER BY ABS(fg.position_lat - $1) + ABS(fg.position_lng - $2)
+       LIMIT 50`,
+      [parseFloat(lat), parseFloat(lng), degreeRadius, excludeUserId]
+    )
+
+    res.json({
+      fixedGuardians: result.rows.map(fg => ({
+        id: fg.id,
+        owner: fg.username,
+        ownerId: fg.user_id,
+        position: { lat: fg.position_lat, lng: fg.position_lng },
+        stats: { atk: fg.atk, def: fg.def, hp: fg.hp },
+        type: fg.guardian_type,
+        territoryId: fg.territory_id
+      }))
+    })
+  } catch (err) {
+    console.error('Nearby fixed guardians error:', err)
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
 module.exports = router
