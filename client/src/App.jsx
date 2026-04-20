@@ -322,7 +322,7 @@ export default function App() {
           />
         ))}
 
-        {/* 다른 플레이어들 - 직접 위치 사용 */}
+        {/* 다른 플레이어들 - 기본 마커 사용 */}
         {(nearbyPlayers || []).map((player, idx) => {
           const lat = parseFloat(player.location?.lat)
           const lng = parseFloat(player.location?.lng)
@@ -334,8 +334,7 @@ export default function App() {
           return (
             <Marker
               key={player.id}
-              position={[lat, lng + (idx * 0.0005)]}
-              icon={createOtherPlayerIcon(player.guardian?.type, player.username)}
+              position={[lat, lng + (idx * 0.001)]}
               eventHandlers={{
                 click: () => {
                   if (guardian) {
@@ -349,16 +348,16 @@ export default function App() {
           )
         })}
 
-        {/* 다른 플레이어의 고정 수호신들 - 직접 위치 사용 */}
+        {/* 다른 플레이어의 고정 수호신들 - 기본 마커 사용 */}
         {(nearbyFixedGuardians || []).map((fg, idx) => {
-          const lat = fg.position?.lat
-          const lng = fg.position?.lng
-          if (!lat || !lng) return null
+          const lat = parseFloat(fg.position?.lat)
+          const lng = parseFloat(fg.position?.lng)
+          console.log('Rendering fixed guardian:', fg.owner, 'at', lat, lng)
+          if (isNaN(lat) || isNaN(lng)) return null
           return (
             <Marker
               key={`fixed-${fg.id}`}
-              position={[lat, lng + (idx * 0.0003) + 0.00015]}
-              icon={createFixedGuardianIcon(fg.type, fg.owner)}
+              position={[lat, lng + (idx * 0.001) + 0.0005]}
               eventHandlers={{
                 click: () => {
                   if (guardian) {
