@@ -32,6 +32,7 @@ export const useGameStore = create((set, get) => ({
   // 전투
   currentBattle: null,
   battleModalOpen: false,
+  lastIntrudedTerritoryId: null,
 
   // 동맹
   alliances: [],
@@ -151,15 +152,25 @@ export const useGameStore = create((set, get) => ({
         })
         const intrusionData = await intrusionRes.json()
 
+        const { lastIntrudedTerritoryId } = get()
+
         if (intrusionData.intruded) {
-          // 전투 요청
-          set({
-            currentBattle: {
-              status: 'intrusion_detected',
-              territory: intrusionData.territory
-            },
-            battleModalOpen: true
-          })
+          // 새로운 영역 침입일 때만 알림 (한 번만)
+          if (intrusionData.territory.id !== lastIntrudedTerritoryId) {
+            set({
+              currentBattle: {
+                status: 'intrusion_detected',
+                territory: intrusionData.territory
+              },
+              battleModalOpen: true,
+              lastIntrudedTerritoryId: intrusionData.territory.id
+            })
+          }
+        } else {
+          // 영역 벗어나면 초기화
+          if (lastIntrudedTerritoryId) {
+            set({ lastIntrudedTerritoryId: null })
+          }
         }
       }
     } catch (err) {
