@@ -173,56 +173,26 @@ export default function App() {
     }
   }, [visitorId])
 
-  // 모든 다른 마커들을 합쳐서 충돌 해결 (플레이어 + 고정 수호신)
+  // 단순 오프셋 방식으로 마커 분산
   const { spreadPlayers, spreadFixedGuardians } = useMemo(() => {
-    // 통합 배열 생성
-    const allMarkers = []
-
-    // 플레이어 추가
-    ;(nearbyPlayers || []).forEach(p => {
-      if (p.location?.lat !== undefined) {
-        allMarkers.push({
-          type: 'player',
-          data: p,
-          lat: p.location.lat,
-          lng: p.location.lng,
-          iconWidth: 50,
-          iconHeight: 50
-        })
+    const players = (nearbyPlayers || []).map((p, i) => ({
+      ...p,
+      spreadPosition: {
+        lat: p.location?.lat,
+        lng: (p.location?.lng || 0) + (i * 0.0003) // 30m씩 오프셋
       }
-    })
+    })).filter(p => p.spreadPosition.lat !== undefined)
 
-    // 고정 수호신 추가
-    ;(nearbyFixedGuardians || []).forEach(fg => {
-      if (fg.position?.lat !== undefined) {
-        allMarkers.push({
-          type: 'fixed',
-          data: fg,
-          lat: fg.position.lat,
-          lng: fg.position.lng,
-          iconWidth: 40,
-          iconHeight: 40
-        })
+    const fixed = (nearbyFixedGuardians || []).map((fg, i) => ({
+      ...fg,
+      spreadPosition: {
+        lat: fg.position?.lat,
+        lng: (fg.position?.lng || 0) + (i * 0.0003) + 0.00015 // 플레이어와 다른 오프셋
       }
-    })
+    })).filter(fg => fg.spreadPosition.lat !== undefined)
 
-    // 충돌 해결
-    const resolved = resolveMarkerCollisions(
-      allMarkers,
-      (m) => ({ lat: m.lat, lng: m.lng }),
-      (m) => ({ width: m.iconWidth, height: m.iconHeight })
-    )
-
-    // 다시 분리
-    const players = resolved.filter(m => m.type === 'player').map(m => ({
-      ...m.data,
-      spreadPosition: m.spreadPosition
-    }))
-
-    const fixed = resolved.filter(m => m.type === 'fixed').map(m => ({
-      ...m.data,
-      spreadPosition: m.spreadPosition
-    }))
+    console.log('Players to render:', players.length, players)
+    console.log('Fixed guardians to render:', fixed.length, fixed)
 
     return { spreadPlayers: players, spreadFixedGuardians: fixed }
   }, [nearbyPlayers, nearbyFixedGuardians])
