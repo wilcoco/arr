@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
-const API_URL = import.meta.env.VITE_API_URL || ''
+// 같은 도메인에서 서빙되므로 빈 문자열 사용
+const API_URL = ''
 
 // localStorage에서 visitorId 불러오기
 const getSavedVisitorId = () => {
