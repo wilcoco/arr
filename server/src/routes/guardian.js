@@ -76,6 +76,18 @@ router.post('/create', async (req, res) => {
   }
 })
 
+// 디버그: 모든 유저 위치 확인
+router.get('/debug-users', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, username, last_location_lat, last_location_lng, is_online FROM users LIMIT 20`
+    )
+    res.json({ users: result.rows })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // 주변 플레이어 조회 (/:visitorId 보다 먼저 정의해야 함!)
 router.get('/nearby-players', async (req, res) => {
   try {
