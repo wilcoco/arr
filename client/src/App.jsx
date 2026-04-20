@@ -322,54 +322,21 @@ export default function App() {
           />
         ))}
 
-        {/* 다른 플레이어들 - 기본 마커 사용 */}
-        {(nearbyPlayers || []).map((player, idx) => {
-          const lat = parseFloat(player.location?.lat)
-          const lng = parseFloat(player.location?.lng)
-          console.log('Rendering player marker:', player.username, 'at', lat, lng)
-          if (isNaN(lat) || isNaN(lng)) {
-            console.log('Invalid position for player:', player)
-            return null
-          }
-          return (
-            <Marker
-              key={player.id}
-              position={[lat, lng + (idx * 0.001)]}
-              eventHandlers={{
-                click: () => {
-                  if (guardian) {
-                    initiatePlayerEncounter(player)
-                  } else {
-                    alert('먼저 수호신을 생성하세요!')
-                  }
-                }
-              }}
-            />
-          )
-        })}
+        {/* 다른 플레이어들 */}
+        {nearbyPlayers && nearbyPlayers.length > 0 && nearbyPlayers.map((player) => (
+          <Marker
+            key={player.id}
+            position={[player.location.lat, player.location.lng]}
+          />
+        ))}
 
-        {/* 다른 플레이어의 고정 수호신들 - 기본 마커 사용 */}
-        {(nearbyFixedGuardians || []).map((fg, idx) => {
-          const lat = parseFloat(fg.position?.lat)
-          const lng = parseFloat(fg.position?.lng)
-          console.log('Rendering fixed guardian:', fg.owner, 'at', lat, lng)
-          if (isNaN(lat) || isNaN(lng)) return null
-          return (
-            <Marker
-              key={`fixed-${fg.id}`}
-              position={[lat, lng + (idx * 0.001) + 0.0005]}
-              eventHandlers={{
-                click: () => {
-                  if (guardian) {
-                    initiateFixedGuardianAttack(fg)
-                  } else {
-                    alert('먼저 수호신을 생성하세요!')
-                  }
-                }
-              }}
-            />
-          )
-        })}
+        {/* 다른 플레이어의 고정 수호신들 */}
+        {nearbyFixedGuardians && nearbyFixedGuardians.length > 0 && nearbyFixedGuardians.map((fg) => (
+          <Marker
+            key={`fixed-${fg.id}`}
+            position={[fg.position.lat, fg.position.lng]}
+          />
+        ))}
       </MapContainer>
 
       {/* 주변 플레이어/고정 수호신 경고 */}
