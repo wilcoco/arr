@@ -337,16 +337,27 @@ export const useGameStore = create((set, get) => ({
 
           const execData = await execRes.json()
 
+          // 먼저 애니메이션 상태로 설정
           set({
             currentBattle: {
               ...currentBattle,
-              status: 'completed',
+              status: 'animating',
               result: execData
             }
           })
 
-          // 데이터 새로고침
-          get().loadUserData()
+          // 애니메이션 후 완료 상태로 변경 (BattleModal에서 처리)
+          setTimeout(() => {
+            set({
+              currentBattle: {
+                ...currentBattle,
+                status: 'completed',
+                result: execData
+              }
+            })
+            // 데이터 새로고침
+            get().loadUserData()
+          }, 4000)
         }
 
         return data

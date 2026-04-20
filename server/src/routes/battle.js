@@ -132,12 +132,12 @@ router.post('/execute', async (req, res) => {
 
     // 양쪽 수호신 스탯 조회
     const attacker = await db.query(
-      'SELECT * FROM guardians WHERE user_id = $1',
+      'SELECT g.*, u.username FROM guardians g JOIN users u ON g.user_id = u.id WHERE g.user_id = $1',
       [b.attacker_id]
     )
 
     const defender = await db.query(
-      'SELECT * FROM guardians WHERE user_id = $1',
+      'SELECT g.*, u.username FROM guardians g JOIN users u ON g.user_id = u.id WHERE g.user_id = $1',
       [b.defender_id]
     )
 
@@ -147,12 +147,59 @@ router.post('/execute', async (req, res) => {
       [b.territory_id]
     )
 
-    let attackerPower = attacker.rows[0]?.atk || 10
-    let defenderPower = (defender.rows[0]?.def || 10)
+    // 동맹 공동방어 확인 (인접 영역 동맹의 고정 수호신)
+    const territory = await db.query('SELECT * FROM territories WHERE id = $1', [b.territory_id])
+    const t = territory.rows[0]
+
+    let allyDefenders = []
+    if (t) {
+      const alliances = await db.query(
+        `SELECT CASE WHEN a.user_id_1 = $1 THEN a.user_id_2 ELSE a.user_id_1 END as ally_id
+         FROM alliances a
+         WHERE (a.user_id_1 = $1 OR a.user_id_2 = $1) AND a.active = true`,
+        [b.defender_id]
+      )
+
+      for (const alliance of alliances.rows) {
+        // 동맹의 인접 영역 고정 수호신 찾기
+        const allyFixed = await db.query(
+          `SELECT fg.*, u.username as owner_name
+           FROM fixed_guardians fg
+           JOIN users u ON fg.user_id = u.id
+           JOIN territories t ON fg.territory_id = t.id
+           WHERE fg.user_id = $1
+             AND ABS(t.center_lat - $2) < 0.005
+             AND ABS(t.center_lng - $3) < 0.005`,
+          [alliance.ally_id, t.center_lat, t.center_lng]
+        )
+
+        allyFixed.rows.forEach(af => {
+          allyDefenders.push({
+            id: af.id,
+            owner: af.owner_name,
+            atk: af.atk,
+            def: af.def,
+            hp: af.hp
+          })
+        })
+      }
+    }
+
+    // 전투력 계산
+    const attackerStats = attacker.rows[0] || { atk: 10, def: 10, hp: 100 }
+    const defenderStats = defender.rows[0] || { atk: 10, def: 10, hp: 100 }
+
+    let attackerPower = attackerStats.atk
+    let defenderPower = defenderStats.def
 
     // 고정 수호신 방어력 추가
     fixedGuardians.rows.forEach(fg => {
       defenderPower += fg.def
+    })
+
+    // 동맹 고정 수호신 방어력 추가 (공동방어 2:1)
+    allyDefenders.forEach(ad => {
+      defenderPower += ad.def
     })
 
     // 궁극기 효과
@@ -237,7 +284,26 @@ router.post('/execute', async (req, res) => {
       attackerPower: Math.round(attackerPower),
       defenderPower: Math.round(defenderPower),
       absorbed,
-      battleId
+      battleId,
+      // 전투 연출용 상세 정보
+      battleDetails: {
+        attacker: {
+          name: attackerStats.username || '공격자',
+          type: attackerStats.type,
+          stats: { atk: attackerStats.atk, def: attackerStats.def, hp: attackerStats.hp }
+        },
+        defender: {
+          name: defenderStats.username || '방어자',
+          type: defenderStats.type,
+          stats: { atk: defenderStats.atk, def: defenderStats.def, hp: defenderStats.hp }
+        },
+        fixedGuardians: fixedGuardians.rows.map(fg => ({
+          type: fg.guardian_type,
+          stats: { atk: fg.atk, def: fg.def, hp: fg.hp }
+        })),
+        allyDefenders: allyDefenders,
+        isJointDefense: allyDefenders.length > 0
+      }
     })
   } catch (err) {
     console.error('Battle execute error:', err)
