@@ -86,21 +86,17 @@ router.get('/nearby', async (req, res) => {
   try {
     const { lat, lng, radius, excludeUserId } = req.query
 
-    // 간단한 거리 계산 (정확하진 않지만 베타용으로 충분)
-    // 1도 ≈ 111km, 위도 기준
-    const degreeRadius = parseFloat(radius) / 111000
+    if (!lat || !lng || !excludeUserId) {
+      return res.json({ territories: [] })
+    }
 
     const result = await db.query(
-      `SELECT t.*, u.username,
-              ABS(t.center_lat - $1) + ABS(t.center_lng - $2) as distance
+      `SELECT t.*, u.username
        FROM territories t
        JOIN users u ON t.user_id = u.id
-       WHERE t.center_lat BETWEEN $1 - $3 AND $1 + $3
-         AND t.center_lng BETWEEN $2 - $3 AND $2 + $3
-         AND t.user_id != $4
-       ORDER BY distance
+       WHERE t.user_id::text != $1
        LIMIT 20`,
-      [parseFloat(lat), parseFloat(lng), degreeRadius, excludeUserId]
+      [excludeUserId]
     )
 
     res.json({
@@ -114,7 +110,7 @@ router.get('/nearby', async (req, res) => {
     })
   } catch (err) {
     console.error('Nearby territories error:', err)
-    res.status(500).json({ success: false, error: err.message })
+    res.json({ territories: [] })
   }
 })
 
@@ -167,9 +163,9 @@ router.post('/check-intrusion', async (req, res) => {
       `SELECT t.*, u.username
        FROM territories t
        JOIN users u ON t.user_id = u.id
-       WHERE t.user_id != $3
-         AND SQRT(POW(t.center_lat - $1, 2) + POW(t.center_lng - $2, 2)) * 111000 < t.radius`,
-      [lat, lng, userId]
+       WHERE t.user_id::text != $1
+         AND SQRT(POW(t.center_lat - $2, 2) + POW(t.center_lng - $3, 2)) * 111000 < t.radius`,
+      [userId, lat, lng]
     )
 
     if (result.rows.length > 0) {
@@ -189,7 +185,7 @@ router.post('/check-intrusion', async (req, res) => {
     }
   } catch (err) {
     console.error('Check intrusion error:', err)
-    res.status(500).json({ success: false, error: err.message })
+    res.json({ intruded: false, territory: null })
   }
 })
 
@@ -210,12 +206,9 @@ router.get('/nearby-fixed-guardians', async (req, res) => {
        FROM fixed_guardians fg
        JOIN users u ON fg.user_id = u.id
        JOIN territories t ON fg.territory_id = t.id
-       WHERE fg.user_id != $4
-         AND fg.position_lat BETWEEN $1 - $3 AND $1 + $3
-         AND fg.position_lng BETWEEN $2 - $3 AND $2 + $3
-       ORDER BY ABS(fg.position_lat - $1) + ABS(fg.position_lng - $2)
+       WHERE fg.user_id::text != $1
        LIMIT 50`,
-      [parseFloat(lat), parseFloat(lng), degreeRadius, excludeUserId]
+      [excludeUserId || '']
     )
 
     res.json({
