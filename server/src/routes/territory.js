@@ -198,6 +198,11 @@ router.get('/nearby-fixed-guardians', async (req, res) => {
   try {
     const { lat, lng, radius, excludeUserId } = req.query
 
+    // 파라미터 검증
+    if (!lat || !lng || !excludeUserId) {
+      return res.json({ fixedGuardians: [] })
+    }
+
     const degreeRadius = parseFloat(radius || 1000) / 111000
 
     const result = await db.query(
@@ -226,7 +231,8 @@ router.get('/nearby-fixed-guardians', async (req, res) => {
     })
   } catch (err) {
     console.error('Nearby fixed guardians error:', err)
-    res.status(500).json({ success: false, error: err.message })
+    // 테이블 없거나 에러 시 빈 배열 반환
+    res.json({ fixedGuardians: [] })
   }
 })
 
