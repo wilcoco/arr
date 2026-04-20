@@ -7,7 +7,7 @@ import TerritoryControls from './components/TerritoryControls'
 import BattleModal from './components/BattleModal'
 
 // 인접한 마커들을 옆으로 배열 (겹침 방지)
-const spreadMarkers = (items, getPosition, threshold = 0.0001) => {
+const spreadMarkers = (items, getPosition, threshold = 0.0005) => {
   if (!items || items.length === 0) return []
 
   const groups = []
@@ -17,12 +17,19 @@ const spreadMarkers = (items, getPosition, threshold = 0.0001) => {
     if (used.has(i)) return
 
     const pos = getPosition(item)
+    if (!pos || pos.lat === undefined || pos.lng === undefined) {
+      used.add(i)
+      return
+    }
+
     const group = [{ ...item, originalIndex: i }]
     used.add(i)
 
     items.forEach((other, j) => {
       if (used.has(j)) return
       const otherPos = getPosition(other)
+      if (!otherPos || otherPos.lat === undefined) return
+
       const dist = Math.abs(pos.lat - otherPos.lat) + Math.abs(pos.lng - otherPos.lng)
       if (dist < threshold) {
         group.push({ ...other, originalIndex: j })
@@ -37,7 +44,7 @@ const spreadMarkers = (items, getPosition, threshold = 0.0001) => {
   groups.forEach(group => {
     const basePos = getPosition(group[0])
     const count = group.length
-    const spacing = 0.00015 // 약 15m 간격
+    const spacing = 0.0004 // 약 40m 간격 (더 넓게)
 
     group.forEach((item, idx) => {
       const offset = (idx - (count - 1) / 2) * spacing
@@ -150,19 +157,21 @@ export default function App() {
 
   // 고정 수호신 위치 분산 (겹침 방지)
   const spreadFixedGuardians = useMemo(() => {
+    console.log('nearbyFixedGuardians:', nearbyFixedGuardians)
     return spreadMarkers(
       nearbyFixedGuardians,
       (fg) => fg.position,
-      0.0002
+      0.001 // 약 100m 이내는 같은 그룹
     )
   }, [nearbyFixedGuardians])
 
   // 다른 플레이어 위치 분산 (겹침 방지)
   const spreadPlayers = useMemo(() => {
+    console.log('nearbyPlayers:', nearbyPlayers)
     return spreadMarkers(
       nearbyPlayers,
       (p) => p.location,
-      0.0002
+      0.001 // 약 100m 이내는 같은 그룹
     )
   }, [nearbyPlayers])
 
