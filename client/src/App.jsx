@@ -176,6 +176,8 @@ export default function App() {
 
   // 주변에 다른 플레이어/고정 수호신 있으면 경고
   useEffect(() => {
+    console.log('nearbyPlayers raw:', nearbyPlayers)
+    console.log('nearbyFixedGuardians raw:', nearbyFixedGuardians)
     if (nearbyPlayers?.length > 0 || nearbyFixedGuardians?.length > 0) {
       const playerCount = nearbyPlayers?.length || 0
       const fixedCount = nearbyFixedGuardians?.length || 0
@@ -320,41 +322,51 @@ export default function App() {
           />
         ))}
 
-        {/* 다른 플레이어들 (겹침 방지 배열) - 클릭하면 전투/협력 선택 */}
-        {spreadPlayers.map(player => (
-          <Marker
-            key={player.id}
-            position={[player.spreadPosition.lat, player.spreadPosition.lng]}
-            icon={createOtherPlayerIcon(player.guardian?.type, player.username)}
-            eventHandlers={{
-              click: () => {
-                if (guardian) {
-                  initiatePlayerEncounter(player)
-                } else {
-                  alert('먼저 수호신을 생성하세요!')
+        {/* 다른 플레이어들 - 직접 위치 사용 */}
+        {(nearbyPlayers || []).map((player, idx) => {
+          const lat = player.location?.lat
+          const lng = player.location?.lng
+          if (!lat || !lng) return null
+          return (
+            <Marker
+              key={player.id}
+              position={[lat, lng + (idx * 0.0003)]}
+              icon={createOtherPlayerIcon(player.guardian?.type, player.username)}
+              eventHandlers={{
+                click: () => {
+                  if (guardian) {
+                    initiatePlayerEncounter(player)
+                  } else {
+                    alert('먼저 수호신을 생성하세요!')
+                  }
                 }
-              }
-            }}
-          />
-        ))}
+              }}
+            />
+          )
+        })}
 
-        {/* 다른 플레이어의 고정 수호신들 (겹침 방지 배열) - 클릭하면 공격 선택 */}
-        {spreadFixedGuardians.map(fg => (
-          <Marker
-            key={`fixed-${fg.id}`}
-            position={[fg.spreadPosition.lat, fg.spreadPosition.lng]}
-            icon={createFixedGuardianIcon(fg.type, fg.owner)}
-            eventHandlers={{
-              click: () => {
-                if (guardian) {
-                  initiateFixedGuardianAttack(fg)
-                } else {
-                  alert('먼저 수호신을 생성하세요!')
+        {/* 다른 플레이어의 고정 수호신들 - 직접 위치 사용 */}
+        {(nearbyFixedGuardians || []).map((fg, idx) => {
+          const lat = fg.position?.lat
+          const lng = fg.position?.lng
+          if (!lat || !lng) return null
+          return (
+            <Marker
+              key={`fixed-${fg.id}`}
+              position={[lat, lng + (idx * 0.0003) + 0.00015]}
+              icon={createFixedGuardianIcon(fg.type, fg.owner)}
+              eventHandlers={{
+                click: () => {
+                  if (guardian) {
+                    initiateFixedGuardianAttack(fg)
+                  } else {
+                    alert('먼저 수호신을 생성하세요!')
+                  }
                 }
-              }
-            }}
-          />
-        ))}
+              }}
+            />
+          )
+        })}
       </MapContainer>
 
       {/* 주변 플레이어/고정 수호신 경고 */}
