@@ -324,42 +324,37 @@ export default function App() {
           />
         ))}
 
-        {/* 테스트: 내 위치 근처에 빨간 원 표시 */}
-        {userLocation && nearbyPlayers && nearbyPlayers.length > 0 && (
-          <Circle
-            center={[nearbyPlayers[0].location.lat, nearbyPlayers[0].location.lng]}
-            radius={50}
-            pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.5 }}
-          />
-        )}
+        {/* 다른 플레이어들 - 충돌 방지 오프셋 적용 */}
+        {nearbyPlayers && nearbyPlayers.map((player, idx) => {
+          const offsetLng = (idx % 5) * 0.0003
+          const offsetLat = Math.floor(idx / 5) * 0.0003
+          return (
+            <Marker
+              key={player.id}
+              position={[player.location.lat + offsetLat, player.location.lng + offsetLng]}
+              icon={createOtherPlayerIcon(player.guardian?.type, player.username)}
+              eventHandlers={{
+                click: () => guardian && initiatePlayerEncounter(player)
+              }}
+            />
+          )
+        })}
 
-        {/* 다른 플레이어들 - divIcon 사용 */}
-        {nearbyPlayers && nearbyPlayers.length > 0 && nearbyPlayers.map((player) => (
-          <Marker
-            key={player.id}
-            position={[player.location.lat, player.location.lng]}
-            icon={L.divIcon({
-              className: 'other-player',
-              html: `<div style="width:30px;height:30px;background:red;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:16px;">👤</div>`,
-              iconSize: [30, 30],
-              iconAnchor: [15, 15]
-            })}
-          />
-        ))}
-
-        {/* 다른 플레이어의 고정 수호신들 - divIcon 사용 */}
-        {nearbyFixedGuardians && nearbyFixedGuardians.length > 0 && nearbyFixedGuardians.map((fg) => (
-          <Marker
-            key={`fixed-${fg.id}`}
-            position={[fg.position.lat, fg.position.lng]}
-            icon={L.divIcon({
-              className: 'fixed-guardian',
-              html: `<div style="width:30px;height:30px;background:blue;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:16px;">🛡️</div>`,
-              iconSize: [30, 30],
-              iconAnchor: [15, 15]
-            })}
-          />
-        ))}
+        {/* 다른 플레이어의 고정 수호신들 - 충돌 방지 오프셋 적용 */}
+        {nearbyFixedGuardians && nearbyFixedGuardians.map((fg, idx) => {
+          const offsetLng = (idx % 5) * 0.0003 + 0.00015
+          const offsetLat = Math.floor(idx / 5) * 0.0003 + 0.00015
+          return (
+            <Marker
+              key={`fixed-${fg.id}`}
+              position={[fg.position.lat + offsetLat, fg.position.lng + offsetLng]}
+              icon={createFixedGuardianIcon(fg.type, fg.owner)}
+              eventHandlers={{
+                click: () => guardian && initiateFixedGuardianAttack(fg)
+              }}
+            />
+          )
+        })}
       </MapContainer>
 
       {/* 주변 플레이어/고정 수호신 경고 */}
