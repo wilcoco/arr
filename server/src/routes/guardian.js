@@ -93,13 +93,7 @@ router.get('/nearby-players', async (req, res) => {
   try {
     const { lat, lng, radius, excludeUserId } = req.query
 
-    if (!lat || !lng || !excludeUserId) {
-      return res.json({ players: [] })
-    }
-
-    // 1도 ≈ 111km
-    const degreeRadius = parseFloat(radius || 1000) / 111000
-
+    // 일단 모든 유저 반환 (위치 있는)
     const result = await db.query(
       `SELECT u.id, u.username, u.last_location_lat, u.last_location_lng, u.is_online,
               g.type as guardian_type, g.atk, g.def, g.hp
@@ -107,13 +101,12 @@ router.get('/nearby-players', async (req, res) => {
        LEFT JOIN guardians g ON u.id = g.user_id
        WHERE u.last_location_lat IS NOT NULL
          AND u.last_location_lng IS NOT NULL
-         AND u.id != $4
-         AND u.last_location_lat BETWEEN $1 - $3 AND $1 + $3
-         AND u.last_location_lng BETWEEN $2 - $3 AND $2 + $3
-       ORDER BY ABS(u.last_location_lat - $1) + ABS(u.last_location_lng - $2)
+         AND u.id::text != $1
        LIMIT 50`,
-      [parseFloat(lat), parseFloat(lng), degreeRadius, excludeUserId]
+      [excludeUserId || '']
     )
+
+    console.log('Nearby players query result:', result.rows.length, 'excludeUserId:', excludeUserId)
 
     res.json({
       players: result.rows.map(p => ({
@@ -129,7 +122,7 @@ router.get('/nearby-players', async (req, res) => {
     })
   } catch (err) {
     console.error('Nearby players error:', err)
-    res.json({ players: [] })
+    res.json({ players: [], error: err.message })
   }
 })
 
