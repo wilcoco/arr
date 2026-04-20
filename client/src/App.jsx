@@ -149,7 +149,9 @@ export default function App() {
   const [locationError, setLocationError] = useState(null)
   const [showLogin, setShowLogin] = useState(false)
   const [nickname, setNickname] = useState('')
-  const [nearbyAlert, setNearbyAlert] = useState(null)
+  const [nearbyData, setNearbyData] = useState(null)
+  const [showNearbyPanel, setShowNearbyPanel] = useState(false)
+  const [lastAlertCount, setLastAlertCount] = useState(0)
 
   const {
     visitorId,
@@ -175,22 +177,31 @@ export default function App() {
     }
   }, [visitorId])
 
-  // 주변에 다른 플레이어/고정 수호신 있으면 경고
+  // 주변에 다른 플레이어/고정 수호신 데이터 저장
   useEffect(() => {
-    console.log('=== 위치 비교 ===')
-    console.log('내 위치:', userLocation)
-    console.log('다른 플레이어:', nearbyPlayers?.map(p => ({ name: p.username, lat: p.location?.lat, lng: p.location?.lng })))
-    console.log('고정 수호신:', nearbyFixedGuardians?.map(fg => ({ owner: fg.owner, lat: fg.position?.lat, lng: fg.position?.lng })))
-    if (nearbyPlayers?.length > 0 || nearbyFixedGuardians?.length > 0) {
-      const playerCount = nearbyPlayers?.length || 0
-      const fixedCount = nearbyFixedGuardians?.length || 0
-      setNearbyAlert({
+    const playerCount = nearbyPlayers?.length || 0
+    const fixedCount = nearbyFixedGuardians?.length || 0
+    const totalCount = playerCount + fixedCount
+
+    if (totalCount > 0) {
+      setNearbyData({
         players: nearbyPlayers || [],
         fixedGuardians: nearbyFixedGuardians || [],
-        message: `주변에 ${playerCount > 0 ? `플레이어 ${playerCount}명` : ''}${playerCount > 0 && fixedCount > 0 ? ', ' : ''}${fixedCount > 0 ? `고정 수호신 ${fixedCount}개` : ''} 발견!`
+        playerCount,
+        fixedCount
       })
+
+      // 새로운 대상 발견 시에만 알림 (한 번만)
+      if (totalCount > lastAlertCount) {
+        setLastAlertCount(totalCount)
+        // 진동으로 알림 (지원되는 경우)
+        if (navigator.vibrate) {
+          navigator.vibrate(200)
+        }
+      }
     } else {
-      setNearbyAlert(null)
+      setNearbyData(null)
+      setLastAlertCount(0)
     }
   }, [nearbyPlayers, nearbyFixedGuardians])
 
@@ -358,31 +369,49 @@ export default function App() {
         })}
       </MapContainer>
 
-      {/* 주변 플레이어/고정 수호신 경고 */}
-      {nearbyAlert && guardian && (
-        <div style={styles.nearbyAlert}>
-          <div style={styles.alertHeader}>
-            <span style={{ fontSize: 20 }}>⚠️</span>
-            <span>{nearbyAlert.message}</span>
-            <button onClick={() => setNearbyAlert(null)} style={styles.alertClose}>✕</button>
+      {/* 탐지 버튼 */}
+      {nearbyData && guardian && (
+        <button
+          onClick={() => setShowNearbyPanel(!showNearbyPanel)}
+          style={{
+            ...styles.detectBtn,
+            background: showNearbyPanel ? '#ff4444' : '#00ff88'
+          }}
+        >
+          🔍 탐지 ({nearbyData.playerCount + nearbyData.fixedCount})
+        </button>
+      )}
+
+      {/* 탐지 패널 */}
+      {showNearbyPanel && nearbyData && guardian && (
+        <div style={styles.nearbyPanel}>
+          <div style={styles.panelHeader}>
+            <span>주변 탐지 결과</span>
+            <button onClick={() => setShowNearbyPanel(false)} style={styles.alertClose}>✕</button>
           </div>
           <div style={styles.alertList}>
-            {nearbyAlert.players.map(p => (
+            {nearbyData.players.map(p => (
               <div
                 key={p.id}
                 style={styles.alertItem}
-                onClick={() => initiatePlayerEncounter(p)}
+                onClick={() => {
+                  initiatePlayerEncounter(p)
+                  setShowNearbyPanel(false)
+                }}
               >
                 <span>{p.guardian?.type === 'animal' ? '🦁' : p.guardian?.type === 'robot' ? '🤖' : '✈️'}</span>
                 <span>{p.username}</span>
                 <span style={styles.alertAction}>전투/협력</span>
               </div>
             ))}
-            {nearbyAlert.fixedGuardians.map(fg => (
+            {nearbyData.fixedGuardians.map(fg => (
               <div
                 key={fg.id}
                 style={styles.alertItem}
-                onClick={() => initiateFixedGuardianAttack(fg)}
+                onClick={() => {
+                  initiateFixedGuardianAttack(fg)
+                  setShowNearbyPanel(false)
+                }}
               >
                 <span>{fg.type === 'production' ? '⚙️' : '🛡️'}</span>
                 <span>{fg.owner}의 수호신</span>
@@ -514,17 +543,41 @@ const styles = {
     fontWeight: 'bold',
     cursor: 'pointer'
   },
-  nearbyAlert: {
+  detectBtn: {
     position: 'absolute',
     top: 20,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '12px 24px',
+    borderRadius: 25,
+    border: 'none',
+    color: 'black',
+    fontWeight: 'bold',
+    fontSize: 16,
+    cursor: 'pointer',
+    zIndex: 1500,
+    boxShadow: '0 4px 15px rgba(0,0,0,0.3)'
+  },
+  nearbyPanel: {
+    position: 'absolute',
+    top: 70,
     left: 20,
     right: 20,
-    background: 'rgba(255,100,100,0.95)',
+    background: 'rgba(0,0,0,0.95)',
     borderRadius: 12,
-    padding: 12,
+    padding: 16,
     color: 'white',
     zIndex: 1500,
-    boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+    maxHeight: '60vh',
+    overflowY: 'auto'
+  },
+  panelHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    fontWeight: 'bold',
+    marginBottom: 12,
+    fontSize: 16
   },
   alertHeader: {
     display: 'flex',
