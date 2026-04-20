@@ -148,6 +148,7 @@ export default function App() {
   const [locationError, setLocationError] = useState(null)
   const [showLogin, setShowLogin] = useState(false)
   const [nickname, setNickname] = useState('')
+  const [nearbyAlert, setNearbyAlert] = useState(null)
 
   const {
     visitorId,
@@ -172,6 +173,21 @@ export default function App() {
       loadUserData()
     }
   }, [visitorId])
+
+  // 주변에 다른 플레이어/고정 수호신 있으면 경고
+  useEffect(() => {
+    if (nearbyPlayers?.length > 0 || nearbyFixedGuardians?.length > 0) {
+      const playerCount = nearbyPlayers?.length || 0
+      const fixedCount = nearbyFixedGuardians?.length || 0
+      setNearbyAlert({
+        players: nearbyPlayers || [],
+        fixedGuardians: nearbyFixedGuardians || [],
+        message: `주변에 ${playerCount > 0 ? `플레이어 ${playerCount}명` : ''}${playerCount > 0 && fixedCount > 0 ? ', ' : ''}${fixedCount > 0 ? `고정 수호신 ${fixedCount}개` : ''} 발견!`
+      })
+    } else {
+      setNearbyAlert(null)
+    }
+  }, [nearbyPlayers, nearbyFixedGuardians])
 
   // 단순 오프셋 방식으로 마커 분산
   const { spreadPlayers, spreadFixedGuardians } = useMemo(() => {
@@ -341,6 +357,41 @@ export default function App() {
         ))}
       </MapContainer>
 
+      {/* 주변 플레이어/고정 수호신 경고 */}
+      {nearbyAlert && guardian && (
+        <div style={styles.nearbyAlert}>
+          <div style={styles.alertHeader}>
+            <span style={{ fontSize: 20 }}>⚠️</span>
+            <span>{nearbyAlert.message}</span>
+            <button onClick={() => setNearbyAlert(null)} style={styles.alertClose}>✕</button>
+          </div>
+          <div style={styles.alertList}>
+            {nearbyAlert.players.map(p => (
+              <div
+                key={p.id}
+                style={styles.alertItem}
+                onClick={() => initiatePlayerEncounter(p)}
+              >
+                <span>{p.guardian?.type === 'animal' ? '🦁' : p.guardian?.type === 'robot' ? '🤖' : '✈️'}</span>
+                <span>{p.username}</span>
+                <span style={styles.alertAction}>전투/협력</span>
+              </div>
+            ))}
+            {nearbyAlert.fixedGuardians.map(fg => (
+              <div
+                key={fg.id}
+                style={styles.alertItem}
+                onClick={() => initiateFixedGuardianAttack(fg)}
+              >
+                <span>{fg.type === 'production' ? '⚙️' : '🛡️'}</span>
+                <span>{fg.owner}의 수호신</span>
+                <span style={styles.alertAction}>공격</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {!visitorId && (
         <div style={styles.locationPrompt}>
           <h2>Guardian AR</h2>
@@ -460,5 +511,55 @@ const styles = {
     borderRadius: 8,
     fontWeight: 'bold',
     cursor: 'pointer'
+  },
+  nearbyAlert: {
+    position: 'absolute',
+    top: 20,
+    left: 20,
+    right: 20,
+    background: 'rgba(255,100,100,0.95)',
+    borderRadius: 12,
+    padding: 12,
+    color: 'white',
+    zIndex: 1500,
+    boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+  },
+  alertHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    fontWeight: 'bold',
+    marginBottom: 8
+  },
+  alertClose: {
+    marginLeft: 'auto',
+    background: 'transparent',
+    border: 'none',
+    color: 'white',
+    fontSize: 18,
+    cursor: 'pointer'
+  },
+  alertList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8
+  },
+  alertItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    background: 'rgba(0,0,0,0.3)',
+    padding: '8px 12px',
+    borderRadius: 8,
+    cursor: 'pointer'
+  },
+  alertAction: {
+    marginLeft: 'auto',
+    background: '#ffd700',
+    color: 'black',
+    padding: '4px 8px',
+    borderRadius: 4,
+    fontSize: 12,
+    fontWeight: 'bold'
   }
 }
