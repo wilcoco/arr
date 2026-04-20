@@ -1,10 +1,58 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { MapContainer, TileLayer, Marker, Circle, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useGameStore } from './stores/gameStore'
 import GuardianPanel from './components/GuardianPanel'
 import TerritoryControls from './components/TerritoryControls'
 import BattleModal from './components/BattleModal'
+
+// 인접한 마커들을 옆으로 배열 (겹침 방지)
+const spreadMarkers = (items, getPosition, threshold = 0.0001) => {
+  if (!items || items.length === 0) return []
+
+  const groups = []
+  const used = new Set()
+
+  items.forEach((item, i) => {
+    if (used.has(i)) return
+
+    const pos = getPosition(item)
+    const group = [{ ...item, originalIndex: i }]
+    used.add(i)
+
+    items.forEach((other, j) => {
+      if (used.has(j)) return
+      const otherPos = getPosition(other)
+      const dist = Math.abs(pos.lat - otherPos.lat) + Math.abs(pos.lng - otherPos.lng)
+      if (dist < threshold) {
+        group.push({ ...other, originalIndex: j })
+        used.add(j)
+      }
+    })
+
+    groups.push(group)
+  })
+
+  const result = []
+  groups.forEach(group => {
+    const basePos = getPosition(group[0])
+    const count = group.length
+    const spacing = 0.00015 // 약 15m 간격
+
+    group.forEach((item, idx) => {
+      const offset = (idx - (count - 1) / 2) * spacing
+      result.push({
+        ...item,
+        spreadPosition: {
+          lat: basePos.lat,
+          lng: basePos.lng + offset
+        }
+      })
+    })
+  })
+
+  return result
+}
 
 // Leaflet 기본 마커 아이콘 수정 (webpack 이슈 해결)
 delete L.Icon.Default.prototype._getIconUrl
@@ -97,6 +145,24 @@ export default function App() {
       loadUserData()
     }
   }, [visitorId])
+
+  // 고정 수호신 위치 분산 (겹침 방지)
+  const spreadFixedGuardians = useMemo(() => {
+    return spreadMarkers(
+      nearbyFixedGuardians,
+      (fg) => fg.position,
+      0.0002
+    )
+  }, [nearbyFixedGuardians])
+
+  // 다른 플레이어 위치 분산 (겹침 방지)
+  const spreadPlayers = useMemo(() => {
+    return spreadMarkers(
+      nearbyPlayers,
+      (p) => p.location,
+      0.0002
+    )
+  }, [nearbyPlayers])
 
   const requestLocation = () => {
     setLocationRequested(true)
@@ -205,20 +271,20 @@ export default function App() {
           />
         ))}
 
-        {/* 다른 플레이어들 */}
-        {nearbyPlayers && nearbyPlayers.map(player => (
+        {/* 다른 플레이어들 (겹침 방지 배열) */}
+        {spreadPlayers.map(player => (
           <Marker
             key={player.id}
-            position={[player.location.lat, player.location.lng]}
+            position={[player.spreadPosition.lat, player.spreadPosition.lng]}
             icon={createOtherPlayerIcon(player.guardian?.type, player.username)}
           />
         ))}
 
-        {/* 다른 플레이어의 고정 수호신들 (플레이어 오프라인이어도 표시) */}
-        {nearbyFixedGuardians && nearbyFixedGuardians.map(fg => (
+        {/* 다른 플레이어의 고정 수호신들 (겹침 방지 배열) */}
+        {spreadFixedGuardians.map(fg => (
           <Marker
             key={`fixed-${fg.id}`}
-            position={[fg.position.lat, fg.position.lng]}
+            position={[fg.spreadPosition.lat, fg.spreadPosition.lng]}
             icon={createFixedGuardianIcon(fg.type, fg.owner)}
           />
         ))}
