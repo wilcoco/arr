@@ -5,6 +5,7 @@ import { useGameStore } from './stores/gameStore'
 import GuardianPanel from './components/GuardianPanel'
 import TerritoryControls from './components/TerritoryControls'
 import BattleModal from './components/BattleModal'
+import PWAInstall from './components/PWAInstall'
 
 // 아이콘 충돌 감지 및 튕겨내기 (물리 기반)
 const resolveMarkerCollisions = (items, getPosition, getIconSize) => {
@@ -445,6 +446,7 @@ export default function App() {
       <GuardianPanel />
       <TerritoryControls />
       <BattleModal />
+      <PWAInstall />
     </div>
   )
 }
