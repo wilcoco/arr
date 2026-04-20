@@ -176,8 +176,10 @@ export default function App() {
 
   // 주변에 다른 플레이어/고정 수호신 있으면 경고
   useEffect(() => {
-    console.log('nearbyPlayers raw:', nearbyPlayers)
-    console.log('nearbyFixedGuardians raw:', nearbyFixedGuardians)
+    console.log('=== 위치 비교 ===')
+    console.log('내 위치:', userLocation)
+    console.log('다른 플레이어:', nearbyPlayers?.map(p => ({ name: p.username, lat: p.location?.lat, lng: p.location?.lng })))
+    console.log('고정 수호신:', nearbyFixedGuardians?.map(fg => ({ owner: fg.owner, lat: fg.position?.lat, lng: fg.position?.lng })))
     if (nearbyPlayers?.length > 0 || nearbyFixedGuardians?.length > 0) {
       const playerCount = nearbyPlayers?.length || 0
       const fixedCount = nearbyFixedGuardians?.length || 0
