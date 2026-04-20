@@ -47,22 +47,28 @@ export default function App() {
   const [mapCenter, setMapCenter] = useState([37.5, 127.0])
   const [locationRequested, setLocationRequested] = useState(false)
   const [locationError, setLocationError] = useState(null)
+  const [showLogin, setShowLogin] = useState(false)
+  const [nickname, setNickname] = useState('')
 
   const {
+    visitorId,
     userLocation,
     guardian,
     territories,
     nearbyTerritories,
     expandingTerritory,
     setUserLocation,
+    setVisitorId,
     loadUserData,
     updateLocation
   } = useGameStore()
 
-  // 초기 데이터 로드
+  // 초기 데이터 로드 (visitorId가 있을 때만)
   useEffect(() => {
-    loadUserData()
-  }, [])
+    if (visitorId) {
+      loadUserData()
+    }
+  }, [visitorId])
 
   const requestLocation = () => {
     setLocationRequested(true)
@@ -172,10 +178,36 @@ export default function App() {
         ))}
       </MapContainer>
 
-      {!userLocation && !locationRequested && (
+      {!visitorId && (
         <div style={styles.locationPrompt}>
           <h2>Guardian AR</h2>
           <p>위치 기반 수호신 전략 게임</p>
+          <input
+            type="text"
+            placeholder="닉네임 입력"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            style={styles.nicknameInput}
+          />
+          <button
+            onClick={() => {
+              if (nickname.trim()) {
+                setVisitorId(nickname.trim())
+                setShowLogin(false)
+              }
+            }}
+            style={styles.locationBtn}
+            disabled={!nickname.trim()}
+          >
+            시작하기
+          </button>
+        </div>
+      )}
+
+      {visitorId && !userLocation && !locationRequested && (
+        <div style={styles.locationPrompt}>
+          <h2>환영합니다, {visitorId}!</h2>
+          <p>위치 권한이 필요합니다</p>
           <button onClick={requestLocation} style={styles.locationBtn}>
             위치 권한 허용하기
           </button>
@@ -216,8 +248,17 @@ const styles = {
     textAlign: 'center',
     zIndex: 2000
   },
+  nicknameInput: {
+    width: '100%',
+    padding: '12px 16px',
+    borderRadius: 8,
+    border: 'none',
+    fontSize: 16,
+    marginTop: 16,
+    textAlign: 'center'
+  },
   locationBtn: {
-    marginTop: 20,
+    marginTop: 16,
     background: '#00ff88',
     color: 'black',
     border: 'none',
@@ -225,7 +266,8 @@ const styles = {
     borderRadius: 8,
     fontSize: 16,
     fontWeight: 'bold',
-    cursor: 'pointer'
+    cursor: 'pointer',
+    width: '100%'
   },
   errorPanel: {
     position: 'absolute',

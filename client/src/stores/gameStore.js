@@ -2,19 +2,14 @@ import { create } from 'zustand'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 
-// 간단한 visitor ID 생성 (실제로는 Firebase Auth 등 사용)
-const getVisitorId = () => {
-  let id = localStorage.getItem('visitorId')
-  if (!id) {
-    id = 'user_' + Math.random().toString(36).substring(2, 15)
-    localStorage.setItem('visitorId', id)
-  }
-  return id
+// localStorage에서 visitorId 불러오기
+const getSavedVisitorId = () => {
+  return localStorage.getItem('visitorId') || null
 }
 
 export const useGameStore = create((set, get) => ({
   // 유저 정보
-  visitorId: getVisitorId(),
+  visitorId: getSavedVisitorId(),
   userId: null,
   userLocation: null,
   energy: 100,
@@ -39,11 +34,18 @@ export const useGameStore = create((set, get) => ({
   error: null,
 
   // Actions
+  setVisitorId: (id) => {
+    localStorage.setItem('visitorId', id)
+    set({ visitorId: id })
+  },
+
   setUserLocation: (location) => set({ userLocation: location }),
 
   // 초기 데이터 로드
   loadUserData: async () => {
     const { visitorId } = get()
+    if (!visitorId) return
+
     try {
       const res = await fetch(`${API_URL}/api/guardian/${visitorId}`)
       const data = await res.json()
