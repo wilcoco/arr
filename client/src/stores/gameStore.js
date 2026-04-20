@@ -15,7 +15,6 @@ const getVisitorId = () => {
 export const useGameStore = create((set, get) => ({
   // 유저 정보
   visitorId: getVisitorId(),
-visitorId: getVisitorId(),
   userId: null,
   userLocation: null,
   energy: 100,
