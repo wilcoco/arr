@@ -322,6 +322,15 @@ export default function App() {
           />
         ))}
 
+        {/* 테스트: 내 위치 근처에 빨간 원 표시 */}
+        {userLocation && nearbyPlayers && nearbyPlayers.length > 0 && (
+          <Circle
+            center={[nearbyPlayers[0].location.lat, nearbyPlayers[0].location.lng]}
+            radius={50}
+            pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.5 }}
+          />
+        )}
+
         {/* 다른 플레이어들 */}
         {nearbyPlayers && nearbyPlayers.length > 0 && nearbyPlayers.map((player) => (
           <Marker
