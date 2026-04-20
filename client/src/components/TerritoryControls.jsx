@@ -44,40 +44,48 @@ export default function TerritoryControls() {
 
   if (showPlaceModal) {
     return (
-      <div style={styles.panel}>
-        <h4 style={{ marginBottom: 12 }}>고정 수호신 배치</h4>
+      <div style={styles.modalPanel}>
+        <h4 style={{ marginBottom: 16, textAlign: 'center' }}>고정 수호신 배치</h4>
 
-        <div style={styles.statRow}>
-          <span>ATK: {placeStats.atk}</span>
-          <input
-            type="range"
-            min="1"
-            max={guardian.stats?.atk || 10}
-            value={placeStats.atk}
-            onChange={(e) => setPlaceStats({...placeStats, atk: Number(e.target.value)})}
-          />
-        </div>
+        <div style={styles.statContainer}>
+          <div style={styles.statItem}>
+            <div style={styles.statLabel}>ATK</div>
+            <input
+              type="range"
+              min="1"
+              max={guardian.stats?.atk || 10}
+              value={placeStats.atk}
+              onChange={(e) => setPlaceStats({...placeStats, atk: Number(e.target.value)})}
+              style={styles.statSlider}
+            />
+            <div style={styles.statValue}>{placeStats.atk}</div>
+          </div>
 
-        <div style={styles.statRow}>
-          <span>DEF: {placeStats.def}</span>
-          <input
-            type="range"
-            min="1"
-            max={guardian.stats?.def || 10}
-            value={placeStats.def}
-            onChange={(e) => setPlaceStats({...placeStats, def: Number(e.target.value)})}
-          />
-        </div>
+          <div style={styles.statItem}>
+            <div style={styles.statLabel}>DEF</div>
+            <input
+              type="range"
+              min="1"
+              max={guardian.stats?.def || 10}
+              value={placeStats.def}
+              onChange={(e) => setPlaceStats({...placeStats, def: Number(e.target.value)})}
+              style={styles.statSlider}
+            />
+            <div style={styles.statValue}>{placeStats.def}</div>
+          </div>
 
-        <div style={styles.statRow}>
-          <span>HP: {placeStats.hp}</span>
-          <input
-            type="range"
-            min="1"
-            max={guardian.stats?.hp || 50}
-            value={placeStats.hp}
-            onChange={(e) => setPlaceStats({...placeStats, hp: Number(e.target.value)})}
-          />
+          <div style={styles.statItem}>
+            <div style={styles.statLabel}>HP</div>
+            <input
+              type="range"
+              min="1"
+              max={guardian.stats?.hp || 50}
+              value={placeStats.hp}
+              onChange={(e) => setPlaceStats({...placeStats, hp: Number(e.target.value)})}
+              style={styles.statSlider}
+            />
+            <div style={styles.statValue}>{placeStats.hp}</div>
+          </div>
         </div>
 
         <div style={styles.typeSelect}>
@@ -85,19 +93,21 @@ export default function TerritoryControls() {
             onClick={() => setGuardianType('defense')}
             style={{
               ...styles.typeBtn,
-              background: guardianType === 'defense' ? '#00ff88' : '#333'
+              background: guardianType === 'defense' ? '#00ff88' : '#333',
+              color: guardianType === 'defense' ? 'black' : 'white'
             }}
           >
-            방어형
+            🛡️ 방어형
           </button>
           <button
             onClick={() => setGuardianType('production')}
             style={{
               ...styles.typeBtn,
-              background: guardianType === 'production' ? '#ffd700' : '#333'
+              background: guardianType === 'production' ? '#ffd700' : '#333',
+              color: guardianType === 'production' ? 'black' : 'white'
             }}
           >
-            생산형
+            💰 생산형
           </button>
         </div>
 
@@ -168,7 +178,18 @@ const styles = {
     flexDirection: 'column',
     gap: 8,
     zIndex: 1000,
-    minWidth: 200
+    minWidth: 160
+  },
+  modalPanel: {
+    position: 'absolute',
+    bottom: 20,
+    left: 20,
+    right: 20,
+    background: 'rgba(0,0,0,0.95)',
+    padding: 20,
+    borderRadius: 12,
+    color: 'white',
+    zIndex: 1000
   },
   radiusDisplay: {
     textAlign: 'center',
@@ -182,7 +203,8 @@ const styles = {
   },
   buttons: {
     display: 'flex',
-    gap: 8
+    gap: 8,
+    marginTop: 12
   },
   expandBtn: {
     background: '#00ff88',
@@ -207,7 +229,7 @@ const styles = {
     background: '#00ff88',
     color: 'black',
     border: 'none',
-    padding: '10px',
+    padding: '12px',
     borderRadius: 6,
     fontWeight: 'bold',
     cursor: 'pointer'
@@ -217,28 +239,48 @@ const styles = {
     background: '#ff4444',
     color: 'white',
     border: 'none',
-    padding: '10px',
+    padding: '12px',
     borderRadius: 6,
     fontWeight: 'bold',
     cursor: 'pointer'
   },
-  statRow: {
+  statContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 16,
+    marginBottom: 16
+  },
+  statItem: {
     display: 'flex',
     alignItems: 'center',
-    gap: 8,
-    fontSize: 14
+    gap: 12
+  },
+  statLabel: {
+    width: 40,
+    fontWeight: 'bold',
+    color: '#00ff88'
+  },
+  statSlider: {
+    flex: 1,
+    height: 8
+  },
+  statValue: {
+    width: 30,
+    textAlign: 'right',
+    fontWeight: 'bold'
   },
   typeSelect: {
     display: 'flex',
-    gap: 8,
-    margin: '8px 0'
+    gap: 12,
+    marginBottom: 8
   },
   typeBtn: {
     flex: 1,
-    padding: '8px',
+    padding: '12px',
     border: 'none',
-    borderRadius: 6,
-    color: 'white',
-    cursor: 'pointer'
+    borderRadius: 8,
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    fontSize: 14
   }
 }
