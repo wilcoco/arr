@@ -19,7 +19,7 @@ export default function TerritoryControls() {
 
   if (!guardian) return null
 
-  // 고정 수호신 배치 처리
+  // 고정 배치 처리
   const handlePlaceGuardian = async () => {
     if (territories.length === 0) {
       alert('먼저 영역을 확장하세요!')
@@ -35,7 +35,7 @@ export default function TerritoryControls() {
     )
 
     if (result?.success) {
-      alert('고정 수호신 배치 완료!')
+      alert('고정 배치 완료!')
       setShowPlaceModal(false)
     } else {
       alert(result?.error || '배치 실패')
@@ -45,7 +45,7 @@ export default function TerritoryControls() {
   if (showPlaceModal) {
     return (
       <div style={styles.modalPanel}>
-        <h4 style={{ marginBottom: 16, textAlign: 'center' }}>고정 수호신 배치</h4>
+        <h4 style={{ marginBottom: 16, textAlign: 'center' }}>고정 배치</h4>
 
         <div style={styles.statContainer}>
           <div style={styles.statItem}>
@@ -159,7 +159,7 @@ export default function TerritoryControls() {
         영역 확장
       </button>
       <button onClick={() => setShowPlaceModal(true)} style={styles.placeBtn}>
-        고정 수호신 배치
+        고정 배치
       </button>
     </div>
   )
