@@ -1,0 +1,12 @@
+{
+  "name": "guardian-ar",
+  "version": "0.1.0",
+  "scripts": {
+    "build": "cd client && npm install && npm run build",
+    "start": "cd server && npm install && node src/index.js",
+    "dev": "cd server && npm run dev"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
