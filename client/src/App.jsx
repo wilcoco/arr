@@ -148,8 +148,16 @@ export default function App() {
       )}
 
       {locationError && (
-        <div style={styles.errorMsg}>
-          {locationError}
+        <div style={styles.errorPanel}>
+          <h3>위치 권한 필요</h3>
+          <p>{locationError}</p>
+          <div style={styles.instructions}>
+            <p><b>iPhone 설정 방법:</b></p>
+            <p>설정 → Chrome → 위치 → 허용</p>
+          </div>
+          <button onClick={requestLocation} style={styles.retryBtn}>
+            다시 시도
+          </button>
         </div>
       )}
 
@@ -184,15 +192,33 @@ const styles = {
     fontWeight: 'bold',
     cursor: 'pointer'
   },
-  errorMsg: {
+  errorPanel: {
     position: 'absolute',
-    top: 20,
+    top: '50%',
     left: '50%',
-    transform: 'translateX(-50%)',
-    background: '#ff4444',
+    transform: 'translate(-50%, -50%)',
+    background: 'rgba(0,0,0,0.95)',
     color: 'white',
+    padding: 24,
+    borderRadius: 16,
+    textAlign: 'center',
+    zIndex: 2000,
+    maxWidth: 300
+  },
+  instructions: {
+    background: '#333',
+    padding: 12,
+    borderRadius: 8,
+    margin: '16px 0',
+    fontSize: 14
+  },
+  retryBtn: {
+    background: '#00ff88',
+    color: 'black',
+    border: 'none',
     padding: '12px 24px',
     borderRadius: 8,
-    zIndex: 2000
+    fontWeight: 'bold',
+    cursor: 'pointer'
   }
 }
