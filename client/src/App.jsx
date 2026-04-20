@@ -333,19 +333,31 @@ export default function App() {
           />
         )}
 
-        {/* 다른 플레이어들 */}
+        {/* 다른 플레이어들 - divIcon 사용 */}
         {nearbyPlayers && nearbyPlayers.length > 0 && nearbyPlayers.map((player) => (
           <Marker
             key={player.id}
             position={[player.location.lat, player.location.lng]}
+            icon={L.divIcon({
+              className: 'other-player',
+              html: `<div style="width:30px;height:30px;background:red;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:16px;">👤</div>`,
+              iconSize: [30, 30],
+              iconAnchor: [15, 15]
+            })}
           />
         ))}
 
-        {/* 다른 플레이어의 고정 수호신들 */}
+        {/* 다른 플레이어의 고정 수호신들 - divIcon 사용 */}
         {nearbyFixedGuardians && nearbyFixedGuardians.length > 0 && nearbyFixedGuardians.map((fg) => (
           <Marker
             key={`fixed-${fg.id}`}
             position={[fg.position.lat, fg.position.lng]}
+            icon={L.divIcon({
+              className: 'fixed-guardian',
+              html: `<div style="width:30px;height:30px;background:blue;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:16px;">🛡️</div>`,
+              iconSize: [30, 30],
+              iconAnchor: [15, 15]
+            })}
           />
         ))}
       </MapContainer>
