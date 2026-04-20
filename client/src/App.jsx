@@ -22,7 +22,7 @@ const playerIcon = L.divIcon({
   iconAnchor: [10, 10]
 })
 
-// 수호신 아이콘 생성
+// 수호신 아이콘 생성 (내 수호신 - 금색)
 const createGuardianIcon = (type) => L.divIcon({
   className: 'guardian-marker',
   html: `<div style="font-size:32px;filter:drop-shadow(0 0 8px gold);">${
@@ -30,6 +30,19 @@ const createGuardianIcon = (type) => L.divIcon({
   }</div>`,
   iconSize: [32, 32],
   iconAnchor: [16, 32]
+})
+
+// 다른 플레이어 아이콘 생성 (빨간색 테두리)
+const createOtherPlayerIcon = (type, username) => L.divIcon({
+  className: 'other-player-marker',
+  html: `<div style="text-align:center;">
+    <div style="font-size:28px;filter:drop-shadow(0 0 6px #ff4444);">${
+      type === 'animal' ? '🦁' : type === 'robot' ? '🤖' : type === 'aircraft' ? '✈️' : '👤'
+    }</div>
+    <div style="font-size:10px;color:white;background:#ff4444;padding:2px 6px;border-radius:4px;margin-top:-5px;">${username}</div>
+  </div>`,
+  iconSize: [50, 50],
+  iconAnchor: [25, 40]
 })
 
 // 맵 중심 이동 컴포넌트
@@ -56,6 +69,7 @@ export default function App() {
     guardian,
     territories,
     nearbyTerritories,
+    nearbyPlayers,
     expandingTerritory,
     setUserLocation,
     setVisitorId,
@@ -174,6 +188,15 @@ export default function App() {
               fillColor: '#ff4444',
               fillOpacity: 0.2
             }}
+          />
+        ))}
+
+        {/* 다른 플레이어들 */}
+        {nearbyPlayers && nearbyPlayers.map(player => (
+          <Marker
+            key={player.id}
+            position={[player.location.lat, player.location.lng]}
+            icon={createOtherPlayerIcon(player.guardian?.type, player.username)}
           />
         ))}
       </MapContainer>

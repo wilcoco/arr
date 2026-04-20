@@ -23,6 +23,9 @@ export const useGameStore = create((set, get) => ({
   nearbyTerritories: [],
   expandingTerritory: null,
 
+  // 주변 플레이어
+  nearbyPlayers: [],
+
   // 전투
   currentBattle: null,
   battleModalOpen: false,
@@ -113,14 +116,22 @@ export const useGameStore = create((set, get) => ({
         body: JSON.stringify({ visitorId, lat, lng })
       })
 
-      // 주변 영역 조회
+      // 주변 영역 및 플레이어 조회
       const { userId } = get()
       if (userId) {
-        const res = await fetch(
+        // 주변 영역 조회
+        const terrRes = await fetch(
           `${API_URL}/api/territory/nearby?lat=${lat}&lng=${lng}&radius=1000&excludeUserId=${userId}`
         )
-        const data = await res.json()
-        set({ nearbyTerritories: data.territories || [] })
+        const terrData = await terrRes.json()
+        set({ nearbyTerritories: terrData.territories || [] })
+
+        // 주변 플레이어 조회
+        const playersRes = await fetch(
+          `${API_URL}/api/guardian/nearby-players?lat=${lat}&lng=${lng}&radius=1000&excludeUserId=${userId}`
+        )
+        const playersData = await playersRes.json()
+        set({ nearbyPlayers: playersData.players || [] })
 
         // 침입 체크
         const intrusionRes = await fetch(`${API_URL}/api/territory/check-intrusion`, {

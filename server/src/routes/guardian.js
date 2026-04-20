@@ -136,4 +136,45 @@ router.post('/location', async (req, res) => {
   }
 })
 
+// 주변 플레이어 조회
+router.get('/nearby-players', async (req, res) => {
+  try {
+    const { lat, lng, radius, excludeUserId } = req.query
+
+    // 1도 ≈ 111km
+    const degreeRadius = parseFloat(radius || 1000) / 111000
+
+    const result = await db.query(
+      `SELECT u.id, u.username, u.last_location_lat, u.last_location_lng, u.is_online,
+              g.type as guardian_type, g.atk, g.def, g.hp
+       FROM users u
+       LEFT JOIN guardians g ON u.id = g.user_id
+       WHERE u.last_location_lat IS NOT NULL
+         AND u.last_location_lng IS NOT NULL
+         AND u.id != $4
+         AND u.last_location_lat BETWEEN $1 - $3 AND $1 + $3
+         AND u.last_location_lng BETWEEN $2 - $3 AND $2 + $3
+       ORDER BY ABS(u.last_location_lat - $1) + ABS(u.last_location_lng - $2)
+       LIMIT 50`,
+      [parseFloat(lat), parseFloat(lng), degreeRadius, excludeUserId]
+    )
+
+    res.json({
+      players: result.rows.map(p => ({
+        id: p.id,
+        username: p.username,
+        location: { lat: p.last_location_lat, lng: p.last_location_lng },
+        isOnline: p.is_online,
+        guardian: p.guardian_type ? {
+          type: p.guardian_type,
+          stats: { atk: p.atk, def: p.def, hp: p.hp }
+        } : null
+      }))
+    })
+  } catch (err) {
+    console.error('Nearby players error:', err)
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
 module.exports = router
