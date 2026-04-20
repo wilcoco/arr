@@ -6,59 +6,77 @@ import GuardianPanel from './components/GuardianPanel'
 import TerritoryControls from './components/TerritoryControls'
 import BattleModal from './components/BattleModal'
 
-// 인접한 마커들을 옆으로 배열 (겹침 방지)
-const spreadMarkers = (items, getPosition, threshold = 0.0005) => {
+// 아이콘 충돌 감지 및 튕겨내기 (물리 기반)
+const resolveMarkerCollisions = (items, getPosition, getIconSize) => {
   if (!items || items.length === 0) return []
 
-  const groups = []
-  const used = new Set()
+  // 위도 1도 ≈ 111km, 경도 1도 ≈ 88km (한국 기준)
+  // 픽셀 to 위경도 변환 (줌 15 기준, 대략적)
+  const pixelToLat = 0.000003
+  const pixelToLng = 0.000004
 
-  items.forEach((item, i) => {
-    if (used.has(i)) return
-
+  // 마커 위치 복사
+  const markers = items.map((item, i) => {
     const pos = getPosition(item)
-    if (!pos || pos.lat === undefined || pos.lng === undefined) {
-      used.add(i)
-      return
+    if (!pos || pos.lat === undefined) {
+      return null
+    }
+    const size = getIconSize ? getIconSize(item) : { width: 50, height: 50 }
+    return {
+      ...item,
+      index: i,
+      lat: pos.lat,
+      lng: pos.lng,
+      width: size.width,
+      height: size.height
+    }
+  }).filter(Boolean)
+
+  // 충돌 해결 반복 (최대 10회)
+  for (let iter = 0; iter < 10; iter++) {
+    let hasCollision = false
+
+    for (let i = 0; i < markers.length; i++) {
+      for (let j = i + 1; j < markers.length; j++) {
+        const a = markers[i]
+        const b = markers[j]
+
+        // 두 아이콘 간 거리 (픽셀 단위로 변환)
+        const dLat = (b.lat - a.lat) / pixelToLat
+        const dLng = (b.lng - a.lng) / pixelToLng
+
+        // 필요한 최소 거리 (아이콘 크기의 절반씩)
+        const minDistX = (a.width + b.width) / 2 + 5 // 5px 여유
+        const minDistY = (a.height + b.height) / 2 + 5
+
+        // 겹침 확인
+        const overlapX = Math.abs(dLng) < minDistX
+        const overlapY = Math.abs(dLat) < minDistY
+
+        if (overlapX && overlapY) {
+          hasCollision = true
+
+          // 밀어내기 방향 계산
+          const dist = Math.sqrt(dLat * dLat + dLng * dLng) || 1
+          const pushX = (dLng / dist) * (minDistX - Math.abs(dLng) + 10) * 0.5
+          const pushY = (dLat / dist) * (minDistY - Math.abs(dLat) + 10) * 0.5
+
+          // 양쪽으로 밀어내기
+          a.lng -= pushX * pixelToLng
+          a.lat -= pushY * pixelToLat
+          b.lng += pushX * pixelToLng
+          b.lat += pushY * pixelToLat
+        }
+      }
     }
 
-    const group = [{ ...item, originalIndex: i }]
-    used.add(i)
+    if (!hasCollision) break
+  }
 
-    items.forEach((other, j) => {
-      if (used.has(j)) return
-      const otherPos = getPosition(other)
-      if (!otherPos || otherPos.lat === undefined) return
-
-      const dist = Math.abs(pos.lat - otherPos.lat) + Math.abs(pos.lng - otherPos.lng)
-      if (dist < threshold) {
-        group.push({ ...other, originalIndex: j })
-        used.add(j)
-      }
-    })
-
-    groups.push(group)
-  })
-
-  const result = []
-  groups.forEach(group => {
-    const basePos = getPosition(group[0])
-    const count = group.length
-    const spacing = 0.0008 // 약 80m 간격 (확실히 보이게)
-
-    group.forEach((item, idx) => {
-      const offset = (idx - (count - 1) / 2) * spacing
-      result.push({
-        ...item,
-        spreadPosition: {
-          lat: basePos.lat,
-          lng: basePos.lng + offset
-        }
-      })
-    })
-  })
-
-  return result
+  return markers.map(m => ({
+    ...m,
+    spreadPosition: { lat: m.lat, lng: m.lng }
+  }))
 }
 
 // Leaflet 기본 마커 아이콘 수정 (webpack 이슈 해결)
@@ -155,11 +173,8 @@ export default function App() {
     }
   }, [visitorId])
 
-  // 모든 다른 마커들을 합쳐서 분산 (플레이어 + 고정 수호신)
+  // 모든 다른 마커들을 합쳐서 충돌 해결 (플레이어 + 고정 수호신)
   const { spreadPlayers, spreadFixedGuardians } = useMemo(() => {
-    console.log('nearbyPlayers:', nearbyPlayers)
-    console.log('nearbyFixedGuardians:', nearbyFixedGuardians)
-
     // 통합 배열 생성
     const allMarkers = []
 
@@ -170,7 +185,9 @@ export default function App() {
           type: 'player',
           data: p,
           lat: p.location.lat,
-          lng: p.location.lng
+          lng: p.location.lng,
+          iconWidth: 50,
+          iconHeight: 50
         })
       }
     })
@@ -182,25 +199,27 @@ export default function App() {
           type: 'fixed',
           data: fg,
           lat: fg.position.lat,
-          lng: fg.position.lng
+          lng: fg.position.lng,
+          iconWidth: 40,
+          iconHeight: 40
         })
       }
     })
 
-    // 통합 배열에서 분산
-    const spread = spreadMarkers(
+    // 충돌 해결
+    const resolved = resolveMarkerCollisions(
       allMarkers,
       (m) => ({ lat: m.lat, lng: m.lng }),
-      0.001
+      (m) => ({ width: m.iconWidth, height: m.iconHeight })
     )
 
     // 다시 분리
-    const players = spread.filter(m => m.type === 'player').map(m => ({
+    const players = resolved.filter(m => m.type === 'player').map(m => ({
       ...m.data,
       spreadPosition: m.spreadPosition
     }))
 
-    const fixed = spread.filter(m => m.type === 'fixed').map(m => ({
+    const fixed = resolved.filter(m => m.type === 'fixed').map(m => ({
       ...m.data,
       spreadPosition: m.spreadPosition
     }))
