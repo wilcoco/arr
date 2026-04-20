@@ -158,14 +158,17 @@ router.post('/check-intrusion', async (req, res) => {
   try {
     const { userId, lat, lng } = req.body
 
+    if (!userId || lat === undefined || lng === undefined) {
+      return res.json({ intruded: false, territory: null })
+    }
+
     // 현재 위치가 다른 사람 영역 안에 있는지 확인
     const result = await db.query(
-      `SELECT t.*, u.username,
-              SQRT(POW(t.center_lat - $1, 2) + POW(t.center_lng - $2, 2)) * 111000 as distance_m
+      `SELECT t.*, u.username
        FROM territories t
        JOIN users u ON t.user_id = u.id
        WHERE t.user_id != $3
-       HAVING SQRT(POW(t.center_lat - $1, 2) + POW(t.center_lng - $2, 2)) * 111000 < t.radius`,
+         AND SQRT(POW(t.center_lat - $1, 2) + POW(t.center_lng - $2, 2)) * 111000 < t.radius`,
       [lat, lng, userId]
     )
 

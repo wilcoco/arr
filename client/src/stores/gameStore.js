@@ -196,6 +196,7 @@ export const useGameStore = create((set, get) => ({
           expandingTerritory: null,
           loading: false
         }))
+        return data
       } else {
         set({ error: data.error, loading: false })
       }
@@ -203,6 +204,52 @@ export const useGameStore = create((set, get) => ({
       return data
     } catch (err) {
       set({ error: err.message, loading: false })
+      return { success: false, error: err.message }
+    }
+  },
+
+  // 고정 수호신 배치
+  placeFixedGuardian: async (territoryId, lat, lng, stats, guardianType) => {
+    const { userId } = get()
+    if (!userId) return { success: false, error: '로그인 필요' }
+
+    try {
+      const res = await fetch(`${API_URL}/api/territory/place-guardian`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          territoryId,
+          userId,
+          lat,
+          lng,
+          stats,
+          guardianType
+        })
+      })
+
+      const data = await res.json()
+
+      if (data.success) {
+        // 본체 수호신 능력치 업데이트
+        set(state => ({
+          guardian: state.guardian ? {
+            ...state.guardian,
+            stats: {
+              ...state.guardian.stats,
+              atk: state.guardian.stats.atk - stats.atk,
+              def: state.guardian.stats.def - stats.def,
+              hp: state.guardian.stats.hp - stats.hp
+            }
+          } : null
+        }))
+
+        // 데이터 새로고침
+        get().loadUserData()
+      }
+
+      return data
+    } catch (err) {
+      console.error('Place fixed guardian error:', err)
       return { success: false, error: err.message }
     }
   },
