@@ -44,7 +44,7 @@ const spreadMarkers = (items, getPosition, threshold = 0.0005) => {
   groups.forEach(group => {
     const basePos = getPosition(group[0])
     const count = group.length
-    const spacing = 0.0004 // 약 40m 간격 (더 넓게)
+    const spacing = 0.0008 // 약 80m 간격 (확실히 보이게)
 
     group.forEach((item, idx) => {
       const offset = (idx - (count - 1) / 2) * spacing
@@ -155,25 +155,58 @@ export default function App() {
     }
   }, [visitorId])
 
-  // 고정 수호신 위치 분산 (겹침 방지)
-  const spreadFixedGuardians = useMemo(() => {
-    console.log('nearbyFixedGuardians:', nearbyFixedGuardians)
-    return spreadMarkers(
-      nearbyFixedGuardians,
-      (fg) => fg.position,
-      0.001 // 약 100m 이내는 같은 그룹
-    )
-  }, [nearbyFixedGuardians])
-
-  // 다른 플레이어 위치 분산 (겹침 방지)
-  const spreadPlayers = useMemo(() => {
+  // 모든 다른 마커들을 합쳐서 분산 (플레이어 + 고정 수호신)
+  const { spreadPlayers, spreadFixedGuardians } = useMemo(() => {
     console.log('nearbyPlayers:', nearbyPlayers)
-    return spreadMarkers(
-      nearbyPlayers,
-      (p) => p.location,
-      0.001 // 약 100m 이내는 같은 그룹
+    console.log('nearbyFixedGuardians:', nearbyFixedGuardians)
+
+    // 통합 배열 생성
+    const allMarkers = []
+
+    // 플레이어 추가
+    ;(nearbyPlayers || []).forEach(p => {
+      if (p.location?.lat !== undefined) {
+        allMarkers.push({
+          type: 'player',
+          data: p,
+          lat: p.location.lat,
+          lng: p.location.lng
+        })
+      }
+    })
+
+    // 고정 수호신 추가
+    ;(nearbyFixedGuardians || []).forEach(fg => {
+      if (fg.position?.lat !== undefined) {
+        allMarkers.push({
+          type: 'fixed',
+          data: fg,
+          lat: fg.position.lat,
+          lng: fg.position.lng
+        })
+      }
+    })
+
+    // 통합 배열에서 분산
+    const spread = spreadMarkers(
+      allMarkers,
+      (m) => ({ lat: m.lat, lng: m.lng }),
+      0.001
     )
-  }, [nearbyPlayers])
+
+    // 다시 분리
+    const players = spread.filter(m => m.type === 'player').map(m => ({
+      ...m.data,
+      spreadPosition: m.spreadPosition
+    }))
+
+    const fixed = spread.filter(m => m.type === 'fixed').map(m => ({
+      ...m.data,
+      spreadPosition: m.spreadPosition
+    }))
+
+    return { spreadPlayers: players, spreadFixedGuardians: fixed }
+  }, [nearbyPlayers, nearbyFixedGuardians])
 
   const requestLocation = () => {
     setLocationRequested(true)
