@@ -1,6 +1,209 @@
 const express = require('express')
 const router = express.Router()
 const db = require('../db')
+const { sendPush } = require('../fcm')
+
+// FCM 토큰 저장 (앱 시작 시 호출)
+router.post('/fcm-token', async (req, res) => {
+  try {
+    const { userId, fcmToken } = req.body
+    await db.query('UPDATE users SET fcm_token = $1 WHERE id = $2', [fcmToken, userId])
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+// ─── 즉시 공격 (영역/플레이어) ───────────────────────────────────
+// 공격자가 선택 → 서버가 즉시 계산 → 결과 반환 + 방어자에게 푸시
+router.post('/attack', async (req, res) => {
+  try {
+    const { attackerId, defenderId, territoryId } = req.body
+
+    // 방어막 확인
+    const defenderUser = await db.query(
+      'SELECT shield_until, fcm_token, username FROM users WHERE id = $1',
+      [defenderId]
+    )
+    const du = defenderUser.rows[0]
+    if (du?.shield_until && new Date(du.shield_until) > new Date()) {
+      return res.json({ success: false, error: '상대방이 방어막 상태입니다' })
+    }
+
+    // 양쪽 수호신 조회
+    const [atkRes, defRes] = await Promise.all([
+      db.query('SELECT g.*, u.username FROM guardians g JOIN users u ON g.user_id = u.id WHERE g.user_id = $1', [attackerId]),
+      db.query('SELECT g.*, u.username FROM guardians g JOIN users u ON g.user_id = u.id WHERE g.user_id = $1', [defenderId])
+    ])
+
+    const atkStats = atkRes.rows[0] || { atk: 10, def: 10, hp: 100, abs: 10, username: '공격자' }
+    const defStats = defRes.rows[0] || { atk: 10, def: 10, hp: 100, abs: 10, username: '방어자' }
+
+    // 고정 수호신 방어력 합산
+    let extraDef = 0
+    let fixedGuardians = []
+    if (territoryId) {
+      const fgRes = await db.query('SELECT * FROM fixed_guardians WHERE territory_id = $1', [territoryId])
+      fixedGuardians = fgRes.rows
+      fixedGuardians.forEach(fg => { extraDef += fg.def })
+    }
+
+    // 전투력 계산
+    let atkPower = atkStats.atk * (0.8 + Math.random() * 0.4)
+    let defPower = (defStats.def + extraDef) * (0.8 + Math.random() * 0.4)
+
+    const winner = atkPower > defPower ? 'attacker' : 'defender'
+    let absorbed = null
+
+    if (winner === 'attacker') {
+      const rate = (atkStats.abs || 10) / 100
+      absorbed = {
+        atk: Math.floor((defStats.atk || 0) * rate),
+        def: Math.floor((defStats.def || 0) * rate),
+        hp:  Math.floor((defStats.hp  || 0) * rate)
+      }
+      await db.query(
+        'UPDATE guardians SET atk=atk+$1, def=def+$2, hp=hp+$3 WHERE user_id=$4',
+        [absorbed.atk, absorbed.def, absorbed.hp, attackerId]
+      )
+      await db.query(
+        'UPDATE guardians SET atk=GREATEST(1,atk-$1), def=GREATEST(1,def-$2), hp=GREATEST(1,hp-$3) WHERE user_id=$4',
+        [absorbed.atk, absorbed.def, absorbed.hp, defenderId]
+      )
+      if (territoryId) {
+        await db.query('UPDATE territories SET user_id=$1 WHERE id=$2', [attackerId, territoryId])
+        await db.query('DELETE FROM fixed_guardians WHERE territory_id=$1', [territoryId])
+      }
+      await db.query('UPDATE users SET energy_currency=energy_currency+10 WHERE id=$1', [attackerId])
+      await db.query('UPDATE users SET energy_currency=GREATEST(0,energy_currency-10) WHERE id=$1', [defenderId])
+    }
+
+    // 전투 기록
+    const battleRes = await db.query(
+      `INSERT INTO battles (attacker_id, defender_id, territory_id, status, attacker_choice, winner_id, attacker_power, defender_power, absorbed_stats, completed_at)
+       VALUES ($1,$2,$3,'completed','battle',$4,$5,$6,$7,NOW()) RETURNING id`,
+      [attackerId, defenderId, territoryId || null,
+       winner === 'attacker' ? attackerId : defenderId,
+       Math.round(atkPower), Math.round(defPower), JSON.stringify(absorbed)]
+    )
+
+    // 방어자 푸시 알림
+    const winnerName = winner === 'attacker' ? atkStats.username : defStats.username
+    const notification = winner === 'attacker'
+      ? { title: '⚔️ 영역 함락!', body: `${atkStats.username}에게 영역을 빼앗겼습니다!` }
+      : { title: '🛡️ 방어 성공!', body: `${atkStats.username}의 공격을 막아냈습니다!` }
+
+    await sendPush(du?.fcm_token, notification.title, notification.body, {
+      type: 'ATTACK_RESULT',
+      winner,
+      battleId: battleRes.rows[0].id
+    })
+
+    res.json({
+      success: true,
+      winner,
+      attackerPower: Math.round(atkPower),
+      defenderPower: Math.round(defPower),
+      absorbed,
+      battleId: battleRes.rows[0].id,
+      battleDetails: {
+        attacker: { name: atkStats.username, type: atkStats.type, stats: { atk: atkStats.atk, def: atkStats.def, hp: atkStats.hp } },
+        defender: { name: defStats.username, type: defStats.type, stats: { atk: defStats.atk, def: defStats.def, hp: defStats.hp } },
+        fixedGuardians: fixedGuardians.map(fg => ({ type: fg.guardian_type, stats: { atk: fg.atk, def: fg.def, hp: fg.hp } })),
+        allyDefenders: [],
+        isJointDefense: false
+      }
+    })
+  } catch (err) {
+    console.error('Attack error:', err)
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+// ─── 동맹 요청 ───────────────────────────────────────────────────
+router.post('/alliance-request', async (req, res) => {
+  try {
+    const { requesterId, targetId } = req.body
+
+    // 기존 동맹 확인
+    const existing = await db.query(
+      `SELECT id FROM alliances
+       WHERE ((user_id_1=$1 AND user_id_2=$2) OR (user_id_1=$2 AND user_id_2=$1)) AND active=true`,
+      [requesterId, targetId]
+    )
+    if (existing.rows.length > 0) {
+      return res.json({ success: false, error: '이미 동맹 관계입니다' })
+    }
+
+    const requester = await db.query('SELECT username FROM users WHERE id=$1', [requesterId])
+    const target    = await db.query('SELECT fcm_token FROM users WHERE id=$1', [targetId])
+
+    // 동맹 요청 기록
+    const reqRes = await db.query(
+      `INSERT INTO alliance_requests (requester_id, target_id, status) VALUES ($1,$2,'pending') RETURNING id`,
+      [requesterId, targetId]
+    )
+
+    // 푸시 알림
+    await sendPush(
+      target.rows[0]?.fcm_token,
+      '🤝 동맹 요청',
+      `${requester.rows[0]?.username}이(가) 동맹을 요청했습니다`,
+      { type: 'ALLIANCE_REQUEST', requestId: reqRes.rows[0].id, requesterId }
+    )
+
+    res.json({ success: true, requestId: reqRes.rows[0].id })
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+// ─── 동맹 수락/거절 ──────────────────────────────────────────────
+router.post('/alliance-respond', async (req, res) => {
+  try {
+    const { requestId, accept } = req.body
+
+    const reqRow = await db.query(
+      'SELECT ar.*, u.username as requester_name, u.fcm_token as requester_token FROM alliance_requests ar JOIN users u ON ar.requester_id=u.id WHERE ar.id=$1',
+      [requestId]
+    )
+    if (reqRow.rows.length === 0) {
+      return res.status(404).json({ success: false, error: '요청을 찾을 수 없습니다' })
+    }
+
+    const r = reqRow.rows[0]
+    const target = await db.query('SELECT username FROM users WHERE id=$1', [r.target_id])
+
+    if (accept) {
+      await db.query(
+        `INSERT INTO alliances (user_id_1, user_id_2, active) VALUES ($1,$2,true)`,
+        [r.requester_id, r.target_id]
+      )
+      await sendPush(
+        r.requester_token,
+        '🤝 동맹 성사!',
+        `${target.rows[0]?.username}이(가) 동맹을 수락했습니다!`,
+        { type: 'ALLIANCE_ACCEPTED', targetId: r.target_id }
+      )
+    } else {
+      await sendPush(
+        r.requester_token,
+        '❌ 동맹 거절',
+        `${target.rows[0]?.username}이(가) 동맹을 거절했습니다`,
+        { type: 'ALLIANCE_DECLINED' }
+      )
+    }
+
+    await db.query(
+      `UPDATE alliance_requests SET status=$1 WHERE id=$2`,
+      [accept ? 'accepted' : 'declined', requestId]
+    )
+
+    res.json({ success: true, result: accept ? 'accepted' : 'declined' })
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
 
 // 전투/동맹 요청
 router.post('/request', async (req, res) => {

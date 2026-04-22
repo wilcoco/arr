@@ -6,6 +6,7 @@ import GuardianPanel from './components/GuardianPanel'
 import TerritoryControls from './components/TerritoryControls'
 import BattleModal from './components/BattleModal'
 import PWAInstall from './components/PWAInstall'
+import { sendToUnity, registerUnityReceiver, isInsideUnity } from './unityBridge'
 
 // 아이콘 충돌 감지 및 튕겨내기 (물리 기반)
 const resolveMarkerCollisions = (items, getPosition, getIconSize) => {
@@ -177,6 +178,26 @@ export default function App() {
     }
   }, [visitorId])
 
+  // Unity 브릿지 수신 등록
+  useEffect(() => {
+    registerUnityReceiver((msg) => {
+      try {
+        const data = typeof msg === 'string' ? JSON.parse(msg) : msg
+        // Unity → 웹: visitorId 동기화
+        if (data.type === 'SET_VISITOR_ID' && data.visitorId) {
+          setVisitorId(data.visitorId)
+        }
+        // Unity → 웹: 위치 동기화 (Unity GPS를 웹에도 반영)
+        if (data.type === 'SET_LOCATION') {
+          setUserLocation({ latitude: data.lat, longitude: data.lng })
+          setMapCenter([data.lat, data.lng])
+        }
+      } catch (e) {
+        console.error('Unity bridge parse error', e)
+      }
+    })
+  }, [])
+
   // 주변에 다른 플레이어/고정 수호신 데이터 저장
   useEffect(() => {
     const playerCount = nearbyPlayers?.length || 0
@@ -229,6 +250,38 @@ export default function App() {
     return { spreadPlayers: players, spreadFixedGuardians: fixed }
   }, [nearbyPlayers, nearbyFixedGuardians])
 
+  // AR 전환 — Unity 안이면 Unity에게, 아니면 PWA 자체 처리
+  const switchToAR = () => {
+    if (isInsideUnity()) {
+      sendToUnity('SWITCH_TO_AR', {
+        lat: userLocation?.latitude,
+        lng: userLocation?.longitude,
+        visitorId,
+        userId: useGameStore.getState().userId
+      })
+    } else {
+      alert('AR 모드는 앱에서 지원됩니다')
+    }
+  }
+
+  // 플레이어 조우 → Unity에 알림 (Unity가 AR 전투 처리)
+  const handlePlayerEncounter = (player) => {
+    if (isInsideUnity()) {
+      sendToUnity('PLAYER_ENCOUNTER', { player })
+    } else {
+      initiatePlayerEncounter(player)
+    }
+  }
+
+  // 고정 수호신 공격 → Unity에 알림
+  const handleFixedGuardianAttack = (fg) => {
+    if (isInsideUnity()) {
+      sendToUnity('FIXED_GUARDIAN_ATTACK', { fixedGuardian: fg })
+    } else {
+      initiateFixedGuardianAttack(fg)
+    }
+  }
+
   const requestLocation = () => {
     setLocationRequested(true)
     if (navigator.geolocation) {
@@ -240,6 +293,8 @@ export default function App() {
           setLocationError(null)
           // 서버에 위치 업데이트
           updateLocation(latitude, longitude)
+          // Unity에도 위치 전달
+          sendToUnity('LOCATION_UPDATE', { lat: latitude, lng: longitude })
         },
         (err) => {
           console.error('Geolocation error:', err)
@@ -255,6 +310,7 @@ export default function App() {
           const { longitude, latitude } = pos.coords
           setUserLocation({ longitude, latitude })
           updateLocation(latitude, longitude)
+          sendToUnity('LOCATION_UPDATE', { lat: latitude, lng: longitude })
         },
         () => {},
         { enableHighAccuracy: true }
@@ -346,13 +402,13 @@ export default function App() {
               position={[player.location.lat + offsetLat, player.location.lng + offsetLng]}
               icon={createOtherPlayerIcon(player.guardian?.type, player.username)}
               eventHandlers={{
-                click: () => guardian && initiatePlayerEncounter(player)
+                click: () => guardian && handlePlayerEncounter(player)
               }}
             />
           )
         })}
 
-        {/* 다른 플레이어의 고정 수호신들 - 충돌 방지 오프셋 적용 */}
+        {/* 다른 플레이어의 고정 수호신들 */}
         {nearbyFixedGuardians && nearbyFixedGuardians.map((fg, idx) => {
           const offsetLng = (idx % 5) * 0.0003 + 0.00015
           const offsetLat = Math.floor(idx / 5) * 0.0003 + 0.00015
@@ -362,12 +418,19 @@ export default function App() {
               position={[fg.position.lat + offsetLat, fg.position.lng + offsetLng]}
               icon={createFixedGuardianIcon(fg.type, fg.owner)}
               eventHandlers={{
-                click: () => guardian && initiateFixedGuardianAttack(fg)
+                click: () => guardian && handleFixedGuardianAttack(fg)
               }}
             />
           )
         })}
       </MapContainer>
+
+      {/* AR 전환 버튼 (항상 표시) */}
+      {guardian && userLocation && (
+        <button onClick={switchToAR} style={styles.arBtn}>
+          📷 AR 모드
+        </button>
+      )}
 
       {/* 탐지 버튼 */}
       {nearbyData && guardian && (
@@ -542,6 +605,21 @@ const styles = {
     borderRadius: 8,
     fontWeight: 'bold',
     cursor: 'pointer'
+  },
+  arBtn: {
+    position: 'absolute',
+    bottom: 100,
+    right: 20,
+    padding: '14px 20px',
+    borderRadius: 50,
+    border: 'none',
+    background: 'linear-gradient(135deg, #00bfff, #0040ff)',
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 15,
+    cursor: 'pointer',
+    zIndex: 1500,
+    boxShadow: '0 4px 20px rgba(0,64,255,0.5)'
   },
   detectBtn: {
     position: 'absolute',

@@ -93,6 +93,18 @@ async function migrate() {
     await safeAddColumn('users', 'last_location_lng', 'FLOAT')
     await safeAddColumn('users', 'shield_until', 'TIMESTAMP')
     await safeAddColumn('users', 'is_online', 'BOOLEAN DEFAULT FALSE')
+    await safeAddColumn('users', 'fcm_token', 'TEXT')
+
+    // 동맹 요청 테이블
+    await safeQuery(`
+      CREATE TABLE IF NOT EXISTS alliance_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        requester_id UUID REFERENCES users(id),
+        target_id UUID REFERENCES users(id),
+        status VARCHAR(20) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `)
 
     // 인덱스 생성 (에러 무시)
     await safeQuery(`CREATE INDEX IF NOT EXISTS idx_users_location ON users(last_location_lat, last_location_lng)`)
