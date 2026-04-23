@@ -1,6 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
 import { MapContainer, TileLayer, Marker, Circle, useMap } from 'react-leaflet'
 import L from 'leaflet'
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
+import markerIcon from 'leaflet/dist/images/marker-icon.png'
+import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 import { useGameStore } from './stores/gameStore'
 import GuardianPanel from './components/GuardianPanel'
 import TerritoryControls from './components/TerritoryControls'
@@ -81,12 +84,12 @@ const resolveMarkerCollisions = (items, getPosition, getIconSize) => {
   }))
 }
 
-// Leaflet 기본 마커 아이콘 수정 (webpack 이슈 해결)
+// Leaflet 기본 마커 아이콘 수정 (Vite 번들링 이슈 해결)
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+  iconRetinaUrl: markerIcon2x,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow
 })
 
 // 플레이어 위치 아이콘
@@ -322,11 +325,12 @@ export default function App() {
   }
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}>
       <MapContainer
         center={mapCenter}
         zoom={15}
         style={{ width: '100%', height: '100%' }}
+        zoomControl={false}
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
