@@ -1,12 +1,8 @@
 import { create } from 'zustand'
 
-// 같은 도메인에서 서빙되므로 빈 문자열 사용
 const API_URL = ''
 
-// localStorage에서 visitorId 불러오기
-const getSavedVisitorId = () => {
-  return localStorage.getItem('visitorId') || null
-}
+const getSavedVisitorId = () => localStorage.getItem('visitorId') || null
 
 export const useGameStore = create((set, get) => ({
   // 유저 정보
@@ -14,19 +10,26 @@ export const useGameStore = create((set, get) => ({
   userId: null,
   userLocation: null,
   energy: 100,
+  layer: 'beginner',
+  battleWins: 0,
+  graduatedAt: null,
+
+  // AR 모드
+  arMode: false,
 
   // 수호신
   guardian: null,
+
+  // 파츠
+  parts: [],
 
   // 영역
   territories: [],
   nearbyTerritories: [],
   expandingTerritory: null,
 
-  // 주변 플레이어
+  // 주변 플레이어 / 고정 수호신
   nearbyPlayers: [],
-
-  // 주변 고정 수호신
   nearbyFixedGuardians: [],
 
   // 전투
@@ -37,11 +40,17 @@ export const useGameStore = create((set, get) => ({
   // 동맹
   alliances: [],
 
+  // 리더보드
+  leaderboard: [],
+
+  // 알림 토스트
+  toast: null,
+
   // 로딩/에러
   loading: false,
   error: null,
 
-  // Actions
+  // ─── 기본 액션 ────────────────────────────────────────────────
   setVisitorId: (id) => {
     localStorage.setItem('visitorId', id)
     set({ visitorId: id })
@@ -49,7 +58,18 @@ export const useGameStore = create((set, get) => ({
 
   setUserLocation: (location) => set({ userLocation: location }),
 
-  // 초기 데이터 로드
+  setArMode: (val) => set({ arMode: val }),
+
+  leaderboardMode: 'area',
+  leaderboardSeason: null,
+  setLeaderboardMode: (mode) => set({ leaderboardMode: mode }),
+
+  showToast: (message, type = 'info') => {
+    set({ toast: { message, type } })
+    setTimeout(() => set({ toast: null }), 4000)
+  },
+
+  // ─── 초기 데이터 로드 ─────────────────────────────────────────
   loadUserData: async () => {
     const { visitorId } = get()
     if (!visitorId) return
@@ -62,16 +82,19 @@ export const useGameStore = create((set, get) => ({
         set({
           guardian: data.guardian,
           userId: data.userId,
-          energy: data.energy
+          energy: data.energy,
+          layer: data.layer || 'beginner',
+          battleWins: data.battleWins || 0,
+          graduatedAt: data.graduatedAt || null
         })
 
-        // 영역도 로드
         if (data.userId) {
           const terrRes = await fetch(`${API_URL}/api/territory/my/${data.userId}`)
           const terrData = await terrRes.json()
-          set({
-            territories: terrData.territories?.map(t => ({ ...t, isOwn: true })) || []
-          })
+          set({ territories: terrData.territories?.map(t => ({ ...t, isOwn: true })) || [] })
+
+          get().fetchParts()
+          get().fetchOfflineSummary()
         }
       }
     } catch (err) {
@@ -79,7 +102,49 @@ export const useGameStore = create((set, get) => ({
     }
   },
 
-  // 수호신 생성
+  // ─── 오프라인 요약 (마지막 접속 이후 활동) ────────────────────
+  fetchOfflineSummary: async () => {
+    const { userId, showToast } = get()
+    if (!userId) return
+    try {
+      const res = await fetch(`${API_URL}/api/activity/summary/${userId}`)
+      const data = await res.json()
+      if (!data.success || !data.hasContent) return
+
+      const s = data.summary
+      const parts = []
+      if (s.partsCount > 0) parts.push(`파츠 ${s.partsCount}개 획득`)
+      if (s.attackedCount > 0) parts.push(`공격받음 ${s.attackedCount}회 (승 ${s.attackedWon} / 패 ${s.attackedLost})`)
+      if (s.defeated) parts.push('수호신 사망 — 영역 취약 상태')
+      if (s.vulnerableCount > 0) parts.push(`취약 영역 ${s.vulnerableCount}개`)
+      if (s.currentRank) parts.push(`현재 ${s.currentRank}위`)
+
+      showToast(`📬 돌아오신 것을 환영합니다!\n${parts.join(' · ')}`, 'info')
+    } catch (err) {
+      console.error('Offline summary error:', err)
+    }
+  },
+
+  // ─── 전투 프리뷰 (실제 전투 전 예상) ──────────────────────────
+  fetchBattlePreview: async (defenderId, territoryId = null) => {
+    const { userId, arMode, guardian } = get()
+    if (!userId) return null
+    try {
+      const ultActivated = (guardian?.stats?.ult_charge || 0) >= 100
+      const res = await fetch(`${API_URL}/api/battle/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attackerId: userId, defenderId, territoryId, arMode, ultActivated: false })
+      })
+      const data = await res.json()
+      return data.success ? data : null
+    } catch (err) {
+      console.error('Battle preview error:', err)
+      return null
+    }
+  },
+
+  // ─── 수호신 생성 ──────────────────────────────────────────────
   createGuardian: async (type, parts) => {
     const { visitorId } = get()
     set({ loading: true, error: null })
@@ -90,19 +155,13 @@ export const useGameStore = create((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ visitorId, type, parts })
       })
-
       const data = await res.json()
 
       if (data.success) {
-        set({
-          guardian: data.guardian,
-          userId: data.userId,
-          loading: false
-        })
+        set({ guardian: data.guardian, userId: data.userId, loading: false })
       } else {
         set({ error: data.error, loading: false })
       }
-
       return data
     } catch (err) {
       set({ error: err.message, loading: false })
@@ -110,7 +169,7 @@ export const useGameStore = create((set, get) => ({
     }
   },
 
-  // 위치 업데이트 (서버에 전송)
+  // ─── 위치 업데이트 ────────────────────────────────────────────
   updateLocation: async (lat, lng) => {
     const { visitorId } = get()
     try {
@@ -120,57 +179,40 @@ export const useGameStore = create((set, get) => ({
         body: JSON.stringify({ visitorId, lat, lng })
       })
 
-      // 주변 영역 및 플레이어 조회
       const { userId } = get()
       if (userId) {
-        // 주변 영역 조회
-        const terrRes = await fetch(
-          `${API_URL}/api/territory/nearby?lat=${lat}&lng=${lng}&radius=1000&excludeUserId=${userId}`
-        )
-        const terrData = await terrRes.json()
-        set({ nearbyTerritories: terrData.territories || [] })
+        const [terrRes, playersRes, fixedRes, intrusionRes] = await Promise.all([
+          fetch(`${API_URL}/api/territory/nearby?lat=${lat}&lng=${lng}&radius=1000&excludeUserId=${userId}`),
+          fetch(`${API_URL}/api/guardian/nearby-players?lat=${lat}&lng=${lng}&radius=1000&excludeUserId=${userId}`),
+          fetch(`${API_URL}/api/territory/nearby-fixed-guardians?lat=${lat}&lng=${lng}&radius=1000&excludeUserId=${userId}`),
+          fetch(`${API_URL}/api/territory/check-intrusion`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, lat, lng })
+          })
+        ])
 
-        // 주변 플레이어 조회
-        const playersRes = await fetch(
-          `${API_URL}/api/guardian/nearby-players?lat=${lat}&lng=${lng}&radius=1000&excludeUserId=${userId}`
-        )
-        const playersData = await playersRes.json()
-        set({ nearbyPlayers: playersData.players || [] })
+        const [terrData, playersData, fixedData, intrusionData] = await Promise.all([
+          terrRes.json(), playersRes.json(), fixedRes.json(), intrusionRes.json()
+        ])
 
-        // 주변 고정 수호신 조회
-        const fixedRes = await fetch(
-          `${API_URL}/api/territory/nearby-fixed-guardians?lat=${lat}&lng=${lng}&radius=1000&excludeUserId=${userId}`
-        )
-        const fixedData = await fixedRes.json()
-        set({ nearbyFixedGuardians: fixedData.fixedGuardians || [] })
-
-        // 침입 체크
-        const intrusionRes = await fetch(`${API_URL}/api/territory/check-intrusion`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, lat, lng })
+        set({
+          nearbyTerritories: terrData.territories || [],
+          nearbyPlayers: playersData.players || [],
+          nearbyFixedGuardians: fixedData.fixedGuardians || []
         })
-        const intrusionData = await intrusionRes.json()
 
         const { lastIntrudedTerritoryId } = get()
-
         if (intrusionData.intruded) {
-          // 새로운 영역 침입일 때만 알림 (한 번만)
           if (intrusionData.territory.id !== lastIntrudedTerritoryId) {
             set({
-              currentBattle: {
-                status: 'intrusion_detected',
-                territory: intrusionData.territory
-              },
+              currentBattle: { status: 'intrusion_detected', territory: intrusionData.territory },
               battleModalOpen: true,
               lastIntrudedTerritoryId: intrusionData.territory.id
             })
           }
         } else {
-          // 영역 벗어나면 초기화
-          if (lastIntrudedTerritoryId) {
-            set({ lastIntrudedTerritoryId: null })
-          }
+          if (lastIntrudedTerritoryId) set({ lastIntrudedTerritoryId: null })
         }
       }
     } catch (err) {
@@ -178,34 +220,21 @@ export const useGameStore = create((set, get) => ({
     }
   },
 
-  // 영역 확장 시작
+  // ─── 영역 관리 ────────────────────────────────────────────────
   startTerritoryExpand: () => {
     const { userLocation } = get()
     if (!userLocation) return
-
-    set({
-      expandingTerritory: {
-        center: userLocation,
-        radius: 50
-      }
-    })
+    set({ expandingTerritory: { center: userLocation, radius: 50 } })
   },
 
-  // 영역 반경 업데이트
   updateTerritoryRadius: (radius) => {
     const { expandingTerritory } = get()
-    if (expandingTerritory) {
-      set({
-        expandingTerritory: { ...expandingTerritory, radius }
-      })
-    }
+    if (expandingTerritory) set({ expandingTerritory: { ...expandingTerritory, radius } })
   },
 
-  // 영역 확정
-  confirmTerritory: async () => {
+  confirmTerritory: async (towerType = 'normal') => {
     const { expandingTerritory, userId } = get()
     if (!expandingTerritory || !userId) return
-
     set({ loading: true })
 
     try {
@@ -216,10 +245,10 @@ export const useGameStore = create((set, get) => ({
           userId,
           lat: expandingTerritory.center.latitude,
           lng: expandingTerritory.center.longitude,
-          radius: expandingTerritory.radius
+          radius: expandingTerritory.radius,
+          towerType
         })
       })
-
       const data = await res.json()
 
       if (data.success) {
@@ -232,7 +261,6 @@ export const useGameStore = create((set, get) => ({
       } else {
         set({ error: data.error, loading: false })
       }
-
       return data
     } catch (err) {
       set({ error: err.message, loading: false })
@@ -240,7 +268,6 @@ export const useGameStore = create((set, get) => ({
     }
   },
 
-  // 고정 수호신 배치
   placeFixedGuardian: async (territoryId, lat, lng, stats, guardianType) => {
     const { userId } = get()
     if (!userId) return { success: false, error: '로그인 필요' }
@@ -249,20 +276,11 @@ export const useGameStore = create((set, get) => ({
       const res = await fetch(`${API_URL}/api/territory/place-guardian`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          territoryId,
-          userId,
-          lat,
-          lng,
-          stats,
-          guardianType
-        })
+        body: JSON.stringify({ territoryId, userId, lat, lng, stats, guardianType })
       })
-
       const data = await res.json()
 
       if (data.success) {
-        // 본체 수호신 능력치 업데이트
         set(state => ({
           guardian: state.guardian ? {
             ...state.guardian,
@@ -274,71 +292,137 @@ export const useGameStore = create((set, get) => ({
             }
           } : null
         }))
-
-        // 데이터 새로고침
         get().loadUserData()
       }
-
       return data
     } catch (err) {
-      console.error('Place fixed guardian error:', err)
       return { success: false, error: err.message }
     }
   },
 
-  // 전투 모달
-  openBattleModal: (battle) => set({
-    currentBattle: battle,
+  // ─── 파츠 관리 ────────────────────────────────────────────────
+  fetchParts: async () => {
+    const { userId } = get()
+    if (!userId) return
+    try {
+      const res = await fetch(`${API_URL}/api/parts/my/${userId}`)
+      const data = await res.json()
+      set({ parts: data.parts || [] })
+    } catch (err) {
+      console.error('Fetch parts error:', err)
+    }
+  },
+
+  equipPart: async (partId) => {
+    const { userId } = get()
+    try {
+      const res = await fetch(`${API_URL}/api/parts/equip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, partId })
+      })
+      const data = await res.json()
+      if (data.success) { get().fetchParts(); get().loadUserData() }
+      return data
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  },
+
+  unequipPart: async (partId) => {
+    const { userId } = get()
+    try {
+      const res = await fetch(`${API_URL}/api/parts/unequip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, partId })
+      })
+      const data = await res.json()
+      if (data.success) { get().fetchParts(); get().loadUserData() }
+      return data
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  },
+
+  combineParts: async (partIds) => {
+    const { userId } = get()
+    try {
+      const res = await fetch(`${API_URL}/api/parts/combine`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, partIds })
+      })
+      const data = await res.json()
+      if (data.success) get().fetchParts()
+      return data
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  },
+
+  // ─── 리더보드 ─────────────────────────────────────────────────
+  // mode: 'area' (면적) | 'current' (시즌 승) | 'all-time' (누적 승)
+  fetchLeaderboard: async (mode) => {
+    try {
+      const m = mode || get().leaderboardMode || 'area'
+      const res = await fetch(`${API_URL}/api/territory/leaderboard?season=${m}`)
+      const data = await res.json()
+      set({
+        leaderboard: data.leaderboard || [],
+        leaderboardMode: m,
+        leaderboardSeason: data.season || null
+      })
+    } catch (err) {
+      console.error('Fetch leaderboard error:', err)
+    }
+  },
+
+  // ─── 전투 모달 ────────────────────────────────────────────────
+  openBattleModal: (battle) => set({ currentBattle: battle, battleModalOpen: true }),
+  closeBattleModal: () => set({ battleModalOpen: false, currentBattle: null }),
+
+  initiatePlayerEncounter: (player) => set({
+    currentBattle: { status: 'player_encounter', targetPlayer: player },
     battleModalOpen: true
   }),
 
-  closeBattleModal: () => set({
-    battleModalOpen: false,
-    currentBattle: null
+  initiateFixedGuardianAttack: (fixedGuardian) => set({
+    currentBattle: { status: 'fixed_guardian_attack', targetFixedGuardian: fixedGuardian },
+    battleModalOpen: true
   }),
 
-  // 플레이어 직접 전투/협력 요청
-  initiatePlayerEncounter: (player) => {
+  // 전투 결과 처리 공통 함수
+  _handleBattleResult: (execData, prevBattle) => {
     set({
-      currentBattle: {
-        status: 'player_encounter',
-        targetPlayer: player
-      },
-      battleModalOpen: true
+      currentBattle: { ...prevBattle, status: 'animating', result: execData }
     })
+    setTimeout(() => {
+      set({ currentBattle: { ...prevBattle, status: 'completed', result: execData } })
+      get().loadUserData()
+
+      if (execData.graduated) {
+        get().showToast('베테랑으로 승격되었습니다!', 'success')
+      }
+      if (execData.defenderDied) {
+        get().showToast('상대방이 격파되었습니다! 초심자 레이어로 강등됩니다.', 'info')
+      }
+    }, 4000)
   },
 
-  // 고정 수호신 직접 공격
-  initiateFixedGuardianAttack: (fixedGuardian) => {
-    set({
-      currentBattle: {
-        status: 'fixed_guardian_attack',
-        targetFixedGuardian: fixedGuardian
-      },
-      battleModalOpen: true
-    })
-  },
-
-  // 전투/동맹 선택
-  respondToBattle: async (choice) => {
-    const { currentBattle, userId } = get()
+  // ─── 전투/동맹 선택 ───────────────────────────────────────────
+  respondToBattle: async (choice, ultActivated = false) => {
+    const { currentBattle, userId, arMode } = get()
     if (!currentBattle) return
 
     try {
       // 플레이어 직접 조우
       if (currentBattle.status === 'player_encounter') {
-        const targetPlayer = currentBattle.targetPlayer
-
         const reqRes = await fetch(`${API_URL}/api/battle/request-player`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            attackerId: userId,
-            defenderId: targetPlayer.id,
-            choice
-          })
+          body: JSON.stringify({ attackerId: userId, defenderId: currentBattle.targetPlayer.id, choice })
         })
-
         const reqData = await reqRes.json()
 
         if (!reqData.success) {
@@ -353,46 +437,23 @@ export const useGameStore = create((set, get) => ({
           return reqData
         }
 
-        // 전투 실행
         const execRes = await fetch(`${API_URL}/api/battle/execute-player`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ battleId: reqData.battleId })
+          body: JSON.stringify({ battleId: reqData.battleId, arMode, ultActivated })
         })
-
         const execData = await execRes.json()
-
-        set({
-          currentBattle: {
-            ...currentBattle,
-            status: 'animating',
-            result: execData
-          }
-        })
-
-        setTimeout(() => {
-          set({
-            currentBattle: { ...currentBattle, status: 'completed', result: execData }
-          })
-          get().loadUserData()
-        }, 4000)
-
+        get()._handleBattleResult(execData, currentBattle)
         return execData
       }
 
-      // 고정 수호신 직접 공격
+      // 고정 수호신 공격
       if (currentBattle.status === 'fixed_guardian_attack') {
-        const targetFG = currentBattle.targetFixedGuardian
-
         const res = await fetch(`${API_URL}/api/battle/attack-fixed-guardian`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            attackerId: userId,
-            fixedGuardianId: targetFG.id
-          })
+          body: JSON.stringify({ attackerId: userId, fixedGuardianId: currentBattle.targetFixedGuardian.id, arMode, ultActivated })
         })
-
         const data = await res.json()
 
         if (!data.success) {
@@ -401,98 +462,64 @@ export const useGameStore = create((set, get) => ({
           return data
         }
 
-        set({
-          currentBattle: {
-            ...currentBattle,
-            status: 'animating',
-            result: data
-          }
-        })
-
-        setTimeout(() => {
-          set({
-            currentBattle: { ...currentBattle, status: 'completed', result: data }
-          })
-          get().loadUserData()
-          // 주변 정보 새로고침
-          const { userLocation } = get()
-          if (userLocation) {
-            get().updateLocation(userLocation.latitude, userLocation.longitude)
-          }
-        }, 4000)
-
+        get()._handleBattleResult(data, currentBattle)
+        const { userLocation } = get()
+        if (userLocation) get().updateLocation(userLocation.latitude, userLocation.longitude)
         return data
       }
 
-      // 영역 침입 (기존 로직)
+      // 영역 침입
       if (currentBattle.status === 'intrusion_detected') {
-        const reqRes = await fetch(`${API_URL}/api/battle/request`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            attackerId: userId,
-            defenderId: currentBattle.territory.userId,
-            territoryId: currentBattle.territory.id
-          })
-        })
-
-        const reqData = await reqRes.json()
-
-        if (!reqData.success) {
-          set({ error: reqData.error })
-          return reqData
-        }
-
-        // 선택 응답
-        const res = await fetch(`${API_URL}/api/battle/respond`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            battleId: reqData.battleId,
-            odingerId: userId,
-            choice
-          })
-        })
-
-        const data = await res.json()
-
-        if (data.result === 'alliance') {
-          alert('동맹이 체결되었습니다!')
-          set({ battleModalOpen: false, currentBattle: null })
-        } else if (data.result === 'battle') {
-          // 전투 실행
-          const execRes = await fetch(`${API_URL}/api/battle/execute`, {
+        if (choice === 'attack') {
+          const res = await fetch(`${API_URL}/api/battle/attack`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ battleId: data.battleId })
-          })
-
-          const execData = await execRes.json()
-
-          // 먼저 애니메이션 상태로 설정
-          set({
-            currentBattle: {
-              ...currentBattle,
-              status: 'animating',
-              result: execData
-            }
-          })
-
-          // 애니메이션 후 완료 상태로 변경 (BattleModal에서 처리)
-          setTimeout(() => {
-            set({
-              currentBattle: {
-                ...currentBattle,
-                status: 'completed',
-                result: execData
-              }
+            body: JSON.stringify({
+              attackerId: userId,
+              defenderId: currentBattle.territory.userId,
+              territoryId: currentBattle.territory.id,
+              arMode,
+              ultActivated
             })
-            // 데이터 새로고침
-            get().loadUserData()
-          }, 4000)
+          })
+          const data = await res.json()
+
+          if (!data.success) {
+            alert(data.error || '공격 실패')
+            set({ battleModalOpen: false, currentBattle: null })
+            return data
+          }
+
+          get()._handleBattleResult(data, currentBattle)
+          return data
         }
 
-        return data
+        if (choice === 'alliance') {
+          const reqRes = await fetch(`${API_URL}/api/battle/request`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              attackerId: userId,
+              defenderId: currentBattle.territory.userId,
+              territoryId: currentBattle.territory.id
+            })
+          })
+          const reqData = await reqRes.json()
+          if (!reqData.success) { set({ error: reqData.error }); return reqData }
+
+          const res = await fetch(`${API_URL}/api/battle/respond`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ battleId: reqData.battleId, odingerId: userId, choice })
+          })
+          const data = await res.json()
+
+          if (data.result === 'alliance') {
+            alert('동맹이 체결되었습니다!')
+            set({ battleModalOpen: false, currentBattle: null })
+          }
+          return data
+        }
       }
     } catch (err) {
       console.error('Respond to battle error:', err)
@@ -501,32 +528,10 @@ export const useGameStore = create((set, get) => ({
     }
   },
 
-  // 궁극기 사용
-  useUltimate: async () => {
-    const { currentBattle, visitorId } = get()
-
-    try {
-      const res = await fetch(`${API_URL}/api/battle/ultimate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          visitorId,
-          battleId: currentBattle?.id
-        })
-      })
-
-      return res.json()
-    } catch (err) {
-      console.error('Ultimate error:', err)
-      return { success: false, error: err.message }
-    }
-  },
-
-  // 동맹 목록 로드
+  // ─── 동맹 ─────────────────────────────────────────────────────
   loadAlliances: async () => {
     const { userId } = get()
     if (!userId) return
-
     try {
       const res = await fetch(`${API_URL}/api/alliance/my/${userId}`)
       const data = await res.json()
@@ -536,26 +541,33 @@ export const useGameStore = create((set, get) => ({
     }
   },
 
-  // 배신
   betrayAlliance: async (allianceId) => {
     const { visitorId } = get()
-
     try {
       const res = await fetch(`${API_URL}/api/alliance/betray`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ allianceId, visitorId })
       })
-
       const data = await res.json()
-
-      if (data.success) {
-        get().loadAlliances()
-      }
-
+      if (data.success) get().loadAlliances()
       return data
     } catch (err) {
-      console.error('Betray error:', err)
+      return { success: false, error: err.message }
+    }
+  },
+
+  // 궁극기 (레거시 - 직접 발동)
+  useUltimate: async () => {
+    const { currentBattle, visitorId } = get()
+    try {
+      const res = await fetch(`${API_URL}/api/battle/ultimate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visitorId, battleId: currentBattle?.id })
+      })
+      return res.json()
+    } catch (err) {
       return { success: false, error: err.message }
     }
   }

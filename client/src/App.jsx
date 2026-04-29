@@ -9,6 +9,8 @@ import GuardianPanel from './components/GuardianPanel'
 import TerritoryControls from './components/TerritoryControls'
 import BattleModal from './components/BattleModal'
 import PWAInstall from './components/PWAInstall'
+import PartsPanel from './components/PartsPanel'
+import Leaderboard from './components/Leaderboard'
 import { sendToUnity, registerUnityReceiver, isInsideUnity } from './unityBridge'
 
 // 아이콘 충돌 감지 및 튕겨내기 (물리 기반)
@@ -156,6 +158,8 @@ export default function App() {
   const [nearbyData, setNearbyData] = useState(null)
   const [showNearbyPanel, setShowNearbyPanel] = useState(false)
   const [lastAlertCount, setLastAlertCount] = useState(0)
+  const [showParts, setShowParts] = useState(false)
+  const [showLeaderboard, setShowLeaderboard] = useState(false)
 
   const {
     visitorId,
@@ -166,8 +170,10 @@ export default function App() {
     nearbyPlayers,
     nearbyFixedGuardians,
     expandingTerritory,
+    toast,
     setUserLocation,
     setVisitorId,
+    setArMode,
     loadUserData,
     updateLocation,
     initiatePlayerEncounter,
@@ -179,6 +185,20 @@ export default function App() {
     if (visitorId) {
       loadUserData()
     }
+  }, [visitorId])
+
+  // 주기적 ping (last_seen_at 갱신, 오프라인 요약 정확도용)
+  useEffect(() => {
+    const { userId } = useGameStore.getState()
+    if (!userId) return
+    const id = setInterval(() => {
+      fetch(`${import.meta.env.VITE_API_URL || ''}/api/activity/ping`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      }).catch(() => {})
+    }, 60000) // 1분마다
+    return () => clearInterval(id)
   }, [visitorId])
 
   // Unity 브릿지 수신 등록
@@ -194,6 +214,10 @@ export default function App() {
         if (data.type === 'SET_LOCATION') {
           setUserLocation({ latitude: data.lat, longitude: data.lng })
           setMapCenter([data.lat, data.lng])
+        }
+        // Unity → 웹: AR 모드 상태 동기화
+        if (data.type === 'AR_MODE_CHANGED') {
+          setArMode(!!data.active)
         }
       } catch (e) {
         console.error('Unity bridge parse error', e)
@@ -539,10 +563,37 @@ export default function App() {
         </div>
       )}
 
+      {/* 파츠 버튼 */}
+      {guardian && (
+        <button onClick={() => setShowParts(true)} style={styles.partsBtn}>
+          ⚙️ 파츠
+        </button>
+      )}
+
+      {/* 리더보드 버튼 */}
+      <button onClick={() => setShowLeaderboard(true)} style={styles.leaderboardBtn}>
+        🏆
+      </button>
+
+      {/* 토스트 알림 (개행 지원) */}
+      {toast && (
+        <div style={{
+          ...styles.toast,
+          background: toast.type === 'success' ? 'rgba(0,180,80,0.95)' : 'rgba(30,30,60,0.95)',
+          borderColor: toast.type === 'success' ? '#00ff88' : '#4488ff',
+          whiteSpace: 'pre-line'
+        }}>
+          {toast.message}
+        </div>
+      )}
+
       <GuardianPanel />
       <TerritoryControls />
       <BattleModal />
       <PWAInstall />
+
+      {showParts && <PartsPanel onClose={() => setShowParts(false)} />}
+      {showLeaderboard && <Leaderboard onClose={() => setShowLeaderboard(false)} />}
     </div>
   )
 }
@@ -698,5 +749,51 @@ const styles = {
     borderRadius: 4,
     fontSize: 12,
     fontWeight: 'bold'
+  },
+  partsBtn: {
+    position: 'absolute',
+    bottom: 160,
+    right: 20,
+    padding: '12px 16px',
+    borderRadius: 50,
+    border: 'none',
+    background: 'rgba(30,30,60,0.9)',
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 14,
+    cursor: 'pointer',
+    zIndex: 1500,
+    boxShadow: '0 4px 15px rgba(0,0,0,0.4)'
+  },
+  leaderboardBtn: {
+    position: 'absolute',
+    bottom: 220,
+    right: 20,
+    width: 46,
+    height: 46,
+    borderRadius: 50,
+    border: 'none',
+    background: 'rgba(30,30,60,0.9)',
+    color: 'white',
+    fontSize: 22,
+    cursor: 'pointer',
+    zIndex: 1500,
+    boxShadow: '0 4px 15px rgba(0,0,0,0.4)'
+  },
+  toast: {
+    position: 'absolute',
+    top: 70,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '12px 20px',
+    borderRadius: 10,
+    color: 'white',
+    fontSize: 14,
+    fontWeight: 'bold',
+    zIndex: 4000,
+    border: '1px solid',
+    maxWidth: '80%',
+    textAlign: 'center',
+    boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
   }
 }

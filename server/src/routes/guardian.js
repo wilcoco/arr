@@ -52,23 +52,28 @@ router.post('/create', async (req, res) => {
       [userId, type, JSON.stringify(parts || {}), stats.atk, stats.def, stats.hp, stats.abs, stats.prd, stats.spd, stats.rng, stats.ter]
     )
 
+    // 신규 유저는 24시간 방어막 자동 부여
+    if (userResult.rows.length === 0) {
+      await db.query(
+        `UPDATE users SET shield_until = NOW() + INTERVAL '24 hours' WHERE id = $1`,
+        [userId]
+      )
+    }
+
+    const num = (v, d = 0) => { const n = parseInt(v); return Number.isFinite(n) ? n : d }
+    const r0 = result.rows[0]
     res.json({
       success: true,
       guardian: {
-        id: result.rows[0].id,
-        type: result.rows[0].type,
+        id: r0.id || '',
+        type: r0.type || 'animal',
         stats: {
-          atk: result.rows[0].atk,
-          def: result.rows[0].def,
-          hp: result.rows[0].hp,
-          abs: result.rows[0].abs,
-          prd: result.rows[0].prd,
-          spd: result.rows[0].spd,
-          rng: result.rows[0].rng,
-          ter: result.rows[0].ter
+          atk: num(r0.atk), def: num(r0.def), hp: num(r0.hp), abs: num(r0.abs),
+          prd: num(r0.prd), spd: num(r0.spd), rng: num(r0.rng), ter: num(r0.ter),
+          ult_charge: num(r0.ult_charge)
         }
       },
-      userId
+      userId: userId || ''
     })
   } catch (err) {
     console.error('Guardian create error:', err)
@@ -108,15 +113,18 @@ router.get('/nearby-players', async (req, res) => {
 
     console.log('Nearby players query result:', result.rows.length, 'excludeUserId:', excludeUserId)
 
+    const num = (v, d = 0) => { const n = parseInt(v); return Number.isFinite(n) ? n : d }
+    const fnum = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d }
     res.json({
       players: result.rows.map(p => ({
-        id: p.id,
-        username: p.username,
-        location: { lat: p.last_location_lat, lng: p.last_location_lng },
-        isOnline: p.is_online,
+        id: p.id || '',
+        username: p.username || '',
+        location: { lat: fnum(p.last_location_lat), lng: fnum(p.last_location_lng) },
+        isOnline: !!p.is_online,
         guardian: p.guardian_type ? {
+          id: '',
           type: p.guardian_type,
-          stats: { atk: p.atk, def: p.def, hp: p.hp }
+          stats: { atk: num(p.atk), def: num(p.def), hp: num(p.hp), abs: 0, prd: 0, spd: 0, rng: 0, ter: 0, ult_charge: 0 }
         } : null
       }))
     })
@@ -132,7 +140,7 @@ router.get('/:visitorId', async (req, res) => {
     const { visitorId } = req.params
 
     const result = await db.query(
-      `SELECT g.*, u.id as user_id, u.energy_currency
+      `SELECT g.*, u.id as user_id, u.energy_currency, u.user_layer, u.battle_wins, u.graduated_at
        FROM guardians g
        JOIN users u ON g.user_id = u.id
        WHERE u.username = $1`,
@@ -144,23 +152,31 @@ router.get('/:visitorId', async (req, res) => {
     }
 
     const g = result.rows[0]
+    const num = (v, d = 0) => { const n = parseInt(v); return Number.isFinite(n) ? n : d }
+    const base = {
+      atk: num(g.atk), def: num(g.def), hp: num(g.hp), abs: num(g.abs),
+      prd: num(g.prd), spd: num(g.spd), rng: num(g.rng), ter: num(g.ter),
+      ult_charge: num(g.ult_charge)
+    }
+
+    // 장착 파츠 유효 스탯
+    const { computeEffectiveStats } = require('./parts')
+    const { stats: effectiveStats, equippedParts, activePassives } = await computeEffectiveStats(g.user_id, base)
+
     res.json({
       guardian: {
-        id: g.id,
-        type: g.type,
-        stats: {
-          atk: g.atk,
-          def: g.def,
-          hp: g.hp,
-          abs: g.abs,
-          prd: g.prd,
-          spd: g.spd,
-          rng: g.rng,
-          ter: g.ter
-        }
+        id: g.id || '',
+        type: g.type || 'animal',
+        stats: base,
+        effectiveStats: effectiveStats || base,
+        equippedParts: equippedParts || [],
+        activePassives: activePassives || []
       },
-      userId: g.user_id,
-      energy: g.energy_currency
+      userId: g.user_id || '',
+      energy: num(g.energy_currency),
+      layer: g.user_layer || 'beginner',
+      battleWins: num(g.battle_wins),
+      graduatedAt: g.graduated_at ? new Date(g.graduated_at).toISOString() : ''
     })
   } catch (err) {
     console.error('Guardian get error:', err)

@@ -65,6 +65,25 @@ router.post('/betray', async (req, res) => {
       [allianceId]
     )
 
+    // 배신자: 24시간 동맹 금지 + 알림
+    await db.query(
+      `UPDATE users SET betrayal_blocked_until = NOW() + INTERVAL '24 hours' WHERE id = $1`,
+      [userId]
+    )
+
+    // 상대방에게 배신 알림
+    const { sendPush } = require('../fcm')
+    const allyId = alliance.rows[0].user_id_1 === userId
+      ? alliance.rows[0].user_id_2
+      : alliance.rows[0].user_id_1
+    const allyToken = await db.query('SELECT fcm_token, username FROM users WHERE id = $1', [allyId])
+    await sendPush(
+      allyToken.rows[0]?.fcm_token,
+      '🗡️ 배신!',
+      `${visitorId}이(가) 동맹을 배신했습니다!`,
+      { type: 'BETRAYAL', betrayerId: userId }
+    )
+
     res.json({
       success: true,
       message: '동맹이 해제되었습니다. 공동 방어가 비활성화됩니다.'
