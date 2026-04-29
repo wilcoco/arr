@@ -95,6 +95,7 @@ export const useGameStore = create((set, get) => ({
 
           get().fetchParts()
           get().fetchOfflineSummary()
+          get().fetchStorageSummary()
         }
       }
     } catch (err) {
@@ -293,6 +294,51 @@ export const useGameStore = create((set, get) => ({
           } : null
         }))
         get().loadUserData()
+      }
+      return data
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  },
+
+  // ─── 고정 수호신 저장소 (생산 누적/수령) ─────────────────────
+  fixedGuardianStorage: [], // [{id, territoryId, center, capacity, storedCount, isFull}]
+  fetchStorageSummary: async () => {
+    const { userId } = get()
+    if (!userId) return
+    try {
+      const res = await fetch(`${API_URL}/api/fixed-guardian/my/${userId}/storage-summary`)
+      const data = await res.json()
+      if (data.success) set({ fixedGuardianStorage: data.guardians || [] })
+    } catch (err) {
+      console.error('Fetch storage summary error:', err)
+    }
+  },
+  collectFromGuardian: async (fgId) => {
+    const { userId, userLocation, showToast } = get()
+    if (!userId || !userLocation) {
+      showToast('위치 정보 필요', 'error')
+      return { success: false }
+    }
+    try {
+      const res = await fetch(`${API_URL}/api/fixed-guardian/${fgId}/collect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, lat: userLocation.latitude, lng: userLocation.longitude })
+      })
+      const data = await res.json()
+      if (data.success) {
+        const c = data.collected || {}
+        const parts = []
+        if (c.parts > 0)   parts.push(`파츠 ${c.parts}개`)
+        if (c.energy > 0)  parts.push(`에너지 ${c.energy}`)
+        if (c.revenue > 0) parts.push(`수익 ${c.revenue}`)
+        showToast(parts.length ? `📦 수령: ${parts.join(', ')}` : '저장소가 비어있습니다', 'success')
+        get().fetchParts()
+        get().loadUserData()
+        get().fetchStorageSummary()
+      } else {
+        showToast(data.error || '수령 실패', 'error')
       }
       return data
     } catch (err) {

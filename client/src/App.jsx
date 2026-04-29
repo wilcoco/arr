@@ -171,14 +171,38 @@ export default function App() {
     nearbyFixedGuardians,
     expandingTerritory,
     toast,
+    fixedGuardianStorage,
     setUserLocation,
     setVisitorId,
     setArMode,
     loadUserData,
     updateLocation,
     initiatePlayerEncounter,
-    initiateFixedGuardianAttack
+    initiateFixedGuardianAttack,
+    collectFromGuardian,
+    fetchStorageSummary
   } = useGameStore()
+
+  // 50m 이내 + 누적된 고정 수호신 (Collect 가능)
+  const collectibleGuardians = (fixedGuardianStorage || []).filter(g => {
+    if (!userLocation || !g.center || g.storedCount <= 0) return false
+    const R = 6371000, toRad = d => d * Math.PI / 180
+    const dLat = toRad(g.center.lat - userLocation.latitude)
+    const dLng = toRad(g.center.lng - userLocation.longitude)
+    const sa = Math.sin(dLat/2)**2 +
+               Math.cos(toRad(userLocation.latitude)) * Math.cos(toRad(g.center.lat)) *
+               Math.sin(dLng/2)**2
+    const d = 2 * R * Math.asin(Math.sqrt(sa))
+    return d <= 50
+  })
+
+  // 위치 변경 시 storage 폴링 (1분마다)
+  useEffect(() => {
+    if (!visitorId) return
+    fetchStorageSummary()
+    const id = setInterval(fetchStorageSummary, 60000)
+    return () => clearInterval(id)
+  }, [visitorId])
 
   // 초기 데이터 로드 (visitorId가 있을 때만)
   useEffect(() => {
@@ -575,6 +599,31 @@ export default function App() {
         🏆
       </button>
 
+      {/* 인접 고정 수호신 Collect 버튼 (50m 이내 + 누적 있을 때만 표시) */}
+      {collectibleGuardians.length > 0 && (
+        <div style={styles.collectBar}>
+          {collectibleGuardians.map(g => (
+            <button
+              key={g.id}
+              onClick={() => collectFromGuardian(g.id)}
+              style={{
+                ...styles.collectBtn,
+                background: g.isFull ? 'linear-gradient(135deg,#ff6600,#cc3300)' : 'linear-gradient(135deg,#ffcc00,#ff8800)'
+              }}
+            >
+              📦 수령 {g.storedCount}/{g.capacity}{g.isFull ? ' (가득참!)' : ''}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 멀리 있는 내 고정 수호신 storage 알림 (간이) */}
+      {(fixedGuardianStorage || []).filter(g => g.storedCount > 0 && !collectibleGuardians.some(c => c.id === g.id)).length > 0 && (
+        <div style={styles.storageHint}>
+          📦 저장소 {(fixedGuardianStorage || []).reduce((s, g) => s + g.storedCount, 0)}개 누적 중 — 영역 방문 시 수령
+        </div>
+      )}
+
       {/* 토스트 알림 (개행 지원) */}
       {toast && (
         <div style={{
@@ -779,6 +828,41 @@ const styles = {
     cursor: 'pointer',
     zIndex: 1500,
     boxShadow: '0 4px 15px rgba(0,0,0,0.4)'
+  },
+  collectBar: {
+    position: 'absolute',
+    bottom: 280,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    zIndex: 1500
+  },
+  collectBtn: {
+    padding: '12px 22px',
+    borderRadius: 30,
+    border: 'none',
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 14,
+    cursor: 'pointer',
+    boxShadow: '0 4px 18px rgba(255,170,0,0.6)',
+    animation: 'pulse 1.4s infinite'
+  },
+  storageHint: {
+    position: 'absolute',
+    top: 110,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '6px 14px',
+    borderRadius: 20,
+    background: 'rgba(40,30,10,0.9)',
+    color: '#ffcc00',
+    fontSize: 12,
+    fontWeight: 'bold',
+    zIndex: 1400,
+    border: '1px solid #ffcc0044'
   },
   toast: {
     position: 'absolute',

@@ -168,6 +168,20 @@ async function migrate() {
     await safeAddColumn('battles', 'expires_at', 'TIMESTAMP')
     await safeAddColumn('alliance_requests', 'expires_at', 'TIMESTAMP')
 
+    // 고정 수호신 저장소 (생산 누적 → 현장 수령 모델)
+    await safeAddColumn('fixed_guardians', 'storage_capacity', 'INT DEFAULT 5')
+    await safeAddColumn('fixed_guardians', 'last_produced_at', 'TIMESTAMP DEFAULT NOW()')
+    await safeQuery(`
+      CREATE TABLE IF NOT EXISTS fixed_guardian_storage (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        fixed_guardian_id UUID REFERENCES fixed_guardians(id) ON DELETE CASCADE,
+        item_type VARCHAR(20) NOT NULL,
+        data JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `)
+    await safeQuery(`CREATE INDEX IF NOT EXISTS idx_fg_storage ON fixed_guardian_storage(fixed_guardian_id)`)
+
     // 활동 이벤트 (오프라인 요약, 로그)
     await safeQuery(`
       CREATE TABLE IF NOT EXISTS activity_events (

@@ -875,7 +875,34 @@ router.post('/attack-fixed-guardian', async (req, res) => {
           `UPDATE guardians SET atk=LEAST(${STAT_CAPS.atk},atk+$1), def=LEAST(${STAT_CAPS.def},def+$2), hp=LEAST(${STAT_CAPS.hp},hp+$3) WHERE user_id=$4`,
           [absorbed.atk, absorbed.def, absorbed.hp, attackerId]
         )
+
+        // 격파 시 storage 약탈: 누적된 파츠/에너지를 공격자에게 전부 이전
+        const looted = await client.query(
+          `SELECT * FROM fixed_guardian_storage WHERE fixed_guardian_id=$1`,
+          [fixedGuardianId]
+        )
+        let lootParts = 0, lootEnergy = 0
+        for (const it of looted.rows) {
+          if (it.item_type === 'part') {
+            const d = it.data || {}
+            await client.query(
+              `INSERT INTO parts (user_id, slot, tier, guardian_type, stat_bonuses, passives)
+               VALUES ($1, $2, $3, $4, $5, $6)`,
+              [attackerId, d.slot || 'head', parseInt(d.tier) || 1, d.guardian_type || 'animal',
+               JSON.stringify(d.stat_bonuses || {}), JSON.stringify(d.passives || [])]
+            )
+            lootParts++
+          } else if (it.item_type === 'energy' || it.item_type === 'revenue') {
+            const amt = parseInt(it.data?.amount) || 0
+            await client.query('UPDATE users SET energy_currency = energy_currency + $1 WHERE id=$2', [amt, attackerId])
+            lootEnergy += amt
+          }
+        }
         await client.query('DELETE FROM fixed_guardians WHERE id=$1', [fixedGuardianId])
+        if (lootParts > 0 || lootEnergy > 0) {
+          await logActivity(client, targetFG.user_id, 'storage_looted',
+            { byUserId: attackerId, parts: lootParts, energy: lootEnergy })
+        }
 
         await client.query("UPDATE users SET battle_wins=COALESCE(battle_wins,0)+1 WHERE id=$1", [attackerId])
         graduated = await checkGraduation(client, attackerId)

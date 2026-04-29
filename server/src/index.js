@@ -12,6 +12,7 @@ const allianceRoutes = require('./routes/alliance');
 const partsRoutes = require('./routes/parts');
 const { generatePartStats } = require('./routes/parts');
 const activityRoutes = require('./routes/activity');
+const fixedGuardianRoutes = require('./routes/fixedGuardian');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -112,36 +113,65 @@ async function runEconomyTick() {
       )
     `)
 
-    // 8. 영역별 파츠 드랍 (확률적 생성)
+    // 8. 영역별 파츠 드랍 (하이브리드: 고정수호신 있으면 storage 누적, 없으면 직접 지급)
     const terrForParts = await db.query(`
-      SELECT t.id, t.user_id, t.radius, g.type as guardian_type
+      SELECT t.id, t.user_id, t.radius, g.type as guardian_type,
+             fg.id AS fg_id, fg.storage_capacity,
+             COALESCE((SELECT COUNT(*) FROM fixed_guardian_storage s WHERE s.fixed_guardian_id = fg.id), 0) AS stored_count
       FROM territories t
       LEFT JOIN guardians g ON g.user_id = t.user_id
+      LEFT JOIN fixed_guardians fg ON fg.territory_id = t.id
     `)
     const slots = ['head', 'body', 'arms', 'legs', 'core']
     let partsDropped = 0
+    let partsToStorage = 0
+    let energyAuto = 0
     for (const t of terrForParts.rows) {
-      let dropChance = 0, maxTier = 1
-      if (t.radius <= 50)       { dropChance = 0.15; maxTier = 1 }
-      else if (t.radius <= 100) { dropChance = 0.12; maxTier = 2 }
-      else                      { dropChance = 0.08; maxTier = 2 }
+      let dropChance = 0, maxTier = 1, energyPerTick = 0
+      if (t.radius <= 50)       { dropChance = 0.15; maxTier = 1; energyPerTick = 1 }
+      else if (t.radius <= 100) { dropChance = 0.12; maxTier = 2; energyPerTick = 3 }
+      else                      { dropChance = 0.08; maxTier = 2; energyPerTick = 8 }
 
+      // 에너지는 항상 자동 지급 (소액)
+      if (t.user_id && energyPerTick > 0) {
+        await db.query('UPDATE users SET energy_currency = energy_currency + $1 WHERE id = $2',
+          [energyPerTick, t.user_id])
+        energyAuto += energyPerTick
+      }
+
+      // 파츠 드랍 시도
       if (Math.random() < dropChance) {
         const slot = slots[Math.floor(Math.random() * slots.length)]
         const tier = (maxTier === 2 && Math.random() < 0.25) ? 2 : 1
         const gType = t.guardian_type || 'animal'
         const { stat_bonuses, passives } = generatePartStats(slot, tier, gType)
-        await db.query(
-          `INSERT INTO parts (user_id, slot, tier, guardian_type, stat_bonuses, passives)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [t.user_id, slot, tier, gType, JSON.stringify(stat_bonuses), JSON.stringify(passives)]
-        )
-        // 오프라인 요약용 이벤트 로그
+
+        const cap = parseInt(t.storage_capacity) || 5
+        const stored = parseInt(t.stored_count) || 0
+
+        if (t.fg_id && stored < cap) {
+          // 고정 수호신 있음 + 여유 있음 → storage에 누적
+          await db.query(
+            `INSERT INTO fixed_guardian_storage (fixed_guardian_id, item_type, data)
+             VALUES ($1, 'part', $2)`,
+            [t.fg_id, JSON.stringify({ slot, tier, guardian_type: gType, stat_bonuses, passives })]
+          )
+          partsToStorage++
+        } else if (!t.fg_id) {
+          // 고정 수호신 없음 → 종전대로 직접 지급
+          await db.query(
+            `INSERT INTO parts (user_id, slot, tier, guardian_type, stat_bonuses, passives)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [t.user_id, slot, tier, gType, JSON.stringify(stat_bonuses), JSON.stringify(passives)]
+          )
+          partsDropped++
+        }
+        // else: storage가 가득 참 → 생산 정지 (skip)
+
         await db.query(
           `INSERT INTO activity_events (user_id, event_type, data) VALUES ($1, 'part_drop', $2)`,
-          [t.user_id, JSON.stringify({ slot, tier, territoryId: t.id })]
+          [t.user_id, JSON.stringify({ slot, tier, territoryId: t.id, toStorage: !!t.fg_id })]
         ).catch(() => {})
-        partsDropped++
       }
     }
 
@@ -155,7 +185,7 @@ async function runEconomyTick() {
        WHERE status='pending' AND expires_at < NOW() RETURNING id`
     )
 
-    console.log(`[Economy] tick complete — ${expired.rows.length} territories expired, ${partsDropped} parts dropped, ${expiredBattles.rows.length} battles + ${expiredAlliances.rows.length} alliances expired`)
+    console.log(`[Economy] tick complete — ${expired.rows.length} terr expired, ${partsDropped} direct parts, ${partsToStorage} storage parts, ${energyAuto} energy auto, ${expiredBattles.rows.length} battles + ${expiredAlliances.rows.length} alliances expired`)
   } catch (err) {
     console.error('[Economy] tick error:', err.message)
   }
@@ -182,6 +212,7 @@ app.use('/api/battle', battleRoutes);
 app.use('/api/alliance', allianceRoutes);
 app.use('/api/parts', partsRoutes);
 app.use('/api/activity', activityRoutes);
+app.use('/api/fixed-guardian', fixedGuardianRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
