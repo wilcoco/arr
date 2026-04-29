@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useGameStore } from '../stores/gameStore'
 
 export default function BattleModal() {
@@ -15,9 +15,21 @@ export default function BattleModal() {
 
   const [battlePhase, setBattlePhase]     = useState('choice')
   const [animationStep, setAnimationStep] = useState(0)
-  const [displayedDamage, setDisplayedDamage] = useState({ attacker: 0, defender: 0 })
   const [ultActivated, setUltActivated]   = useState(false)
   const [preview, setPreview]             = useState(null)
+
+  // 턴제 시뮬레이션 상태
+  const [turns, setTurns]                 = useState([])
+  const [currentTurnIdx, setCurrentTurnIdx] = useState(-1)
+  const [hpView, setHpView]               = useState({ atk: 100, def: 100, atkMax: 100, defMax: 100 })
+  const [damagePopup, setDamagePopup]     = useState(null)  // {side, value, crit}
+  const [shakeSide, setShakeSide]         = useState(null)
+  const [flashScreen, setFlashScreen]     = useState(false)
+
+  // 궁극기 QTE 윈도우 (3턴 시점에 2초)
+  const [ultWindowOpen, setUltWindowOpen] = useState(false)
+  const [ultUsedDuringBattle, setUltUsedDuringBattle] = useState(false)
+  const ultUsedRef = useRef(false)
 
   useEffect(() => {
     if (currentBattle?.status === 'animating' && currentBattle.result) {
@@ -81,19 +93,97 @@ export default function BattleModal() {
     )
   }
 
+  // 결과로부터 턴 시퀀스를 시뮬레이션 — 서버 결과와 일치시키되 시각화용
+  const buildTurns = (result) => {
+    const details = result.battleDetails || {}
+    const myAtk   = details.attacker?.stats?.atk || 30
+    const myHp    = details.attacker?.stats?.hp  || 100
+    const enAtk   = details.defender?.stats?.atk || 20
+    const enHp    = details.defender?.stats?.hp  || 100
+    const iWon    = result.winner === 'attacker'
+
+    const totalTurns = 6
+    const myWinTurns = iWon ? Math.ceil(totalTurns / 2) + 1 : Math.floor(totalTurns / 2)
+    const enWinTurns = totalTurns - myWinTurns
+
+    // 턴별 데미지 (대략적, 결과의 power 합계에 맞춤)
+    const myPerTurn = Math.max(1, Math.round((enHp / Math.max(1, myWinTurns)) * 0.9))
+    const enPerTurn = Math.max(1, Math.round((myHp / Math.max(1, enWinTurns + 1)) * 0.7))
+
+    const arr = []
+    for (let i = 0; i < totalTurns; i++) {
+      const isMy = i % 2 === 0
+      const crit = Math.random() < 0.18
+      const dmg = (isMy ? myPerTurn : enPerTurn) * (crit ? 1.6 : 1.0)
+      arr.push({ side: isMy ? 'atk' : 'def', dmg: Math.round(dmg), crit })
+    }
+    return { turns: arr, myHp, enHp }
+  }
+
   const runBattleAnimation = async (result) => {
     setBattlePhase('animating')
-    for (let i = 1; i <= 5; i++) {
-      await new Promise(r => setTimeout(r, 600))
-      setAnimationStep(i)
-      const p = i / 5
-      setDisplayedDamage({
-        attacker: Math.round(result.attackerPower * p),
-        defender: Math.round(result.defenderPower * p)
+    setUltUsedDuringBattle(false)
+    ultUsedRef.current = false
+
+    const sim = buildTurns(result)
+    setTurns(sim.turns)
+    setHpView({ atk: sim.myHp, def: sim.enHp, atkMax: sim.myHp, defMax: sim.enHp })
+
+    for (let i = 0; i < sim.turns.length; i++) {
+      // 3번째 턴 직전: 궁극기 충전 상태면 QTE 윈도우 오픈 (2초)
+      if (i === 2 && (guardian?.stats?.ultCharge ?? guardian?.stats?.ult_charge ?? 0) >= 100 && !ultUsedRef.current) {
+        setUltWindowOpen(true)
+        await new Promise(r => setTimeout(r, 2000))
+        setUltWindowOpen(false)
+      }
+
+      setCurrentTurnIdx(i)
+      const t = sim.turns[i]
+      let dmg = t.dmg
+
+      // 궁극기 사용된 턴이면 내 공격 ×1.5
+      if (ultUsedRef.current && t.side === 'atk' && i === 2) {
+        dmg = Math.round(dmg * 1.5)
+      }
+
+      // 공격 사이드 살짝 앞으로 (visual)
+      setShakeSide(t.side === 'atk' ? 'def' : 'atk')
+      await new Promise(r => setTimeout(r, 150))
+
+      // 데미지 팝업 + HP 감소
+      setDamagePopup({ side: t.side === 'atk' ? 'def' : 'atk', value: dmg, crit: t.crit })
+      setHpView(prev => {
+        const next = { ...prev }
+        if (t.side === 'atk') next.def = Math.max(0, prev.def - dmg)
+        else                  next.atk = Math.max(0, prev.atk - dmg)
+        return next
       })
+
+      // 크리티컬이면 화면 플래시
+      if (t.crit) {
+        setFlashScreen(true)
+        setTimeout(() => setFlashScreen(false), 100)
+      }
+
+      await new Promise(r => setTimeout(r, 600))
+      setShakeSide(null)
+      setDamagePopup(null)
     }
-    await new Promise(r => setTimeout(r, 500))
+
+    await new Promise(r => setTimeout(r, 600))
     setBattlePhase('result')
+    setCurrentTurnIdx(-1)
+  }
+
+  // 궁극기 QTE 발동
+  const triggerUltimateInBattle = () => {
+    if (!ultWindowOpen || ultUsedRef.current) return
+    ultUsedRef.current = true
+    setUltUsedDuringBattle(true)
+    setUltWindowOpen(false)
+    // 화면 플래시 + 진동 효과
+    setFlashScreen(true)
+    setTimeout(() => setFlashScreen(false), 200)
   }
 
   if (!battleModalOpen || !currentBattle) return null
@@ -101,9 +191,10 @@ export default function BattleModal() {
   const hasUlt = (guardian?.stats?.ultCharge || 0) >= 100
 
   const handleChoice = async (choice) => {
-    if (choice === 'battle') {
+    if (choice === 'battle' || choice === 'attack') {
       setBattlePhase('waiting')
     }
+    // ultActivated: 사전 토글이 ON이거나 전투 중 QTE로 발동되면 true (전투 중 발동은 버튼 후 후처리)
     await respondToBattle(choice, ultActivated)
     setUltActivated(false)
   }
@@ -228,55 +319,84 @@ export default function BattleModal() {
     )
   }
 
-  // ─── 전투 애니메이션 ──────────────────────────────────────────
+  // ─── 전투 애니메이션 (턴제 + QTE 궁극기) ──────────────────────
   if (battlePhase === 'animating' && currentBattle.result) {
     const result  = currentBattle.result
     const details = result.battleDetails || {}
+    const atkPct  = (hpView.atk / (hpView.atkMax || 1)) * 100
+    const defPct  = (hpView.def / (hpView.defMax || 1)) * 100
 
     return (
       <div style={styles.overlay}>
+        {flashScreen && <div style={styles.flashOverlay} />}
         <div style={styles.battleModal}>
           <h2 style={styles.battleTitle}>
-            전투 중! {arMode && <span style={{ color: '#00bfff', fontSize: 14 }}>AR 보너스 활성</span>}
+            ⚔ 턴 {currentTurnIdx + 1}/{turns.length}
+            {arMode && <span style={{ color: '#00bfff', fontSize: 13, marginLeft: 8 }}>AR +20%</span>}
+            {ultUsedDuringBattle && <span style={{ color: '#ffd700', fontSize: 13, marginLeft: 8 }}>⚡ ULTIMATE</span>}
           </h2>
+
           <div style={styles.battleField}>
-            <div style={styles.fighter}>
-              <div style={{ ...styles.guardianIcon, animation: animationStep % 2 === 1 ? 'shake 0.3s' : 'none' }}>
+            {/* 좌측 — 내 수호신 */}
+            <div style={{ ...styles.fighter, transform: shakeSide === 'atk' ? 'translateX(-8px)' : 'none', transition: 'transform 0.15s' }}>
+              <div style={styles.guardianIcon}>
                 {details.attacker?.type === 'animal' ? '🦁' : details.attacker?.type === 'robot' ? '🤖' : '✈️'}
               </div>
-              <div style={styles.fighterName}>{details.attacker?.name}</div>
-              <div style={styles.powerBar}>
-                <div style={{ ...styles.powerFill, width: `${Math.min(100, (displayedDamage.attacker / (result.defenderPower || 100)) * 100)}%`, background: '#ff4444' }} />
+              <div style={styles.fighterName}>{details.attacker?.name || '나'}</div>
+              <div style={styles.hpBar}>
+                <div style={{ ...styles.hpFill, width: `${atkPct}%`, background: atkPct > 50 ? '#00ff88' : atkPct > 25 ? '#ffaa00' : '#ff4444' }} />
               </div>
-              <div style={styles.powerText}>ATK: {displayedDamage.attacker}</div>
+              <div style={styles.hpText}>{hpView.atk} / {hpView.atkMax}</div>
+              {damagePopup?.side === 'atk' && (
+                <div style={{ ...styles.dmgPopup, color: damagePopup.crit ? '#ffd700' : '#ff4444', fontSize: damagePopup.crit ? 32 : 24 }}>
+                  -{damagePopup.value}{damagePopup.crit ? '!' : ''}
+                </div>
+              )}
             </div>
 
             <div style={styles.vsText}>VS</div>
 
-            <div style={styles.fighter}>
+            {/* 우측 — 적 */}
+            <div style={{ ...styles.fighter, transform: shakeSide === 'def' ? 'translateX(8px)' : 'none', transition: 'transform 0.15s' }}>
               <div style={styles.defenderGroup}>
-                <div style={{ ...styles.guardianIcon, animation: animationStep % 2 === 0 ? 'shake 0.3s' : 'none' }}>
+                <div style={styles.guardianIcon}>
                   {details.defender?.type === 'animal' ? '🦁' : details.defender?.type === 'robot' ? '🤖' : '✈️'}
                 </div>
                 {details.fixedGuardians?.map((fg, i) => <div key={i} style={styles.fixedIcon}>{fg.type === 'production' ? '⚙️' : '🛡️'}</div>)}
                 {details.allyDefenders?.map((ad, i) => <div key={`ally-${i}`} style={styles.allyIcon}>🛡️</div>)}
               </div>
               <div style={styles.fighterName}>
-                {details.defender?.name}
+                {details.defender?.name || '상대'}
                 {details.isJointDefense && <span style={styles.jointTag}>공동방어</span>}
               </div>
-              <div style={styles.powerBar}>
-                <div style={{ ...styles.powerFill, width: `${Math.min(100, (displayedDamage.defender / (result.attackerPower || 100)) * 100)}%`, background: '#4488ff' }} />
+              <div style={styles.hpBar}>
+                <div style={{ ...styles.hpFill, width: `${defPct}%`, background: defPct > 50 ? '#00ff88' : defPct > 25 ? '#ffaa00' : '#ff4444' }} />
               </div>
-              <div style={styles.powerText}>DEF: {displayedDamage.defender}</div>
+              <div style={styles.hpText}>{hpView.def} / {hpView.defMax}</div>
+              {damagePopup?.side === 'def' && (
+                <div style={{ ...styles.dmgPopup, color: damagePopup.crit ? '#ffd700' : '#ff4444', fontSize: damagePopup.crit ? 32 : 24 }}>
+                  -{damagePopup.value}{damagePopup.crit ? '!' : ''}
+                </div>
+              )}
             </div>
           </div>
 
-          <div style={styles.hitEffects}>
-            {[...Array(animationStep)].map((_, i) => <span key={i} style={styles.hitStar}>💥</span>)}
-          </div>
+          {/* QTE 궁극기 윈도우 (2초) */}
+          {ultWindowOpen && (
+            <button onClick={triggerUltimateInBattle} style={styles.qteButton}>
+              ⚡ TAP TO ULTIMATE!
+              <div style={styles.qteTimer} />
+            </button>
+          )}
+
+          {/* 차후 카드 시스템 슬롯 — 옵션 C 확장 시 여기에 카드 3장 렌더 */}
+          {/* <div style={styles.cardSlot}>...</div> */}
         </div>
-        <style>{`@keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-5px)} 75%{transform:translateX(5px)} }`}</style>
+        <style>{`
+          @keyframes pulse-qte { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
+          @keyframes pop-up { 0%{transform:translate(-50%,-10px);opacity:0} 30%{opacity:1} 100%{transform:translate(-50%,-50px);opacity:0} }
+          @keyframes qte-timer { from{width:100%} to{width:0%} }
+        `}</style>
       </div>
     )
   }
@@ -444,9 +564,34 @@ const styles = {
   },
   battleField: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    padding: '16px 8px', marginBottom: 12
+    padding: '16px 8px', marginBottom: 12, position: 'relative'
   },
-  fighter: { flex: 1, textAlign: 'center' },
+  fighter: { flex: 1, textAlign: 'center', position: 'relative' },
+  hpBar: { height: 10, background: '#222', borderRadius: 5, overflow: 'hidden', marginBottom: 4, border: '1px solid #444' },
+  hpFill: { height: '100%', transition: 'width 0.4s ease, background 0.3s' },
+  hpText: { fontSize: 11, color: '#aaa', fontWeight: 'bold' },
+  dmgPopup: {
+    position: 'absolute', top: 30, left: '50%',
+    fontWeight: 'bold', textShadow: '0 0 8px rgba(0,0,0,0.9)',
+    pointerEvents: 'none', animation: 'pop-up 0.7s forwards', zIndex: 10
+  },
+  flashOverlay: {
+    position: 'fixed', inset: 0, background: 'white', opacity: 0.4,
+    pointerEvents: 'none', zIndex: 9999
+  },
+  qteButton: {
+    width: '100%', padding: '14px 16px', marginTop: 8,
+    background: 'linear-gradient(135deg, #ffd700, #ff8800)',
+    color: 'black', border: 'none', borderRadius: 12,
+    fontSize: 18, fontWeight: 'bold', cursor: 'pointer',
+    boxShadow: '0 0 24px rgba(255,200,0,0.7)',
+    animation: 'pulse-qte 0.4s infinite',
+    position: 'relative', overflow: 'hidden'
+  },
+  qteTimer: {
+    position: 'absolute', bottom: 0, left: 0, height: 4,
+    background: 'rgba(0,0,0,0.6)', animation: 'qte-timer 2s linear forwards'
+  },
   guardianIcon: { fontSize: 44, marginBottom: 6 },
   defenderGroup: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 4, marginBottom: 6 },
   fixedIcon: { fontSize: 26, filter: 'drop-shadow(0 0 4px #4488ff)' },
