@@ -221,6 +221,8 @@ async function runEconomyTick() {
                   [t.id, newOwner]
                 )
                 await db.query(`DELETE FROM fixed_guardians WHERE territory_id=$1`, [t.id])
+                // XP: 호구 점령 +100
+                await require('./levels').gainXp(null, newOwner, 100, 'atari_capture').catch(() => {})
                 atariCaptures++
               }
             }

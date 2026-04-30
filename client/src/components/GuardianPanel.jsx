@@ -23,6 +23,7 @@ export default function GuardianPanel() {
     battleWins,
     territories,
     energy,
+    level,
     createGuardian
   } = useGameStore()
 
@@ -41,16 +42,33 @@ export default function GuardianPanel() {
 
     return (
       <div style={styles.panel}>
-        {/* 레이어 배지 + 수호신 아이콘 */}
+        {/* 레이어 배지 + 수호신 아이콘 + 레벨 */}
         <div style={styles.header} onClick={() => setExpanded(e => !e)}>
           <span style={{ fontSize: 22 }}>
             {guardian.type === 'animal' ? '🦁' : guardian.type === 'robot' ? '🤖' : '✈️'}
           </span>
-          <span style={{ flex: 1, fontWeight: 'bold', fontSize: 13 }}>내 수호신</span>
+          <span style={{ flex: 1, fontWeight: 'bold', fontSize: 13 }}>
+            Lv.{level?.level || 1} 수호신
+          </span>
           <span style={{ ...styles.layerBadge, color: lc.color, background: lc.bg }}>
             {lc.label}
           </span>
           <span style={{ fontSize: 10, color: '#888', marginLeft: 4 }}>{expanded ? '▲' : '▼'}</span>
+        </div>
+
+        {/* 레벨 바 */}
+        <div style={styles.levelRow}>
+          <div style={styles.levelInfo}>
+            <span style={{ fontSize: 10, color: '#aaa' }}>
+              {level?.isMaxLevel ? 'MAX' : `${level?.xp || 0} / ${level?.nextLevelXp || 100} XP`}
+            </span>
+            <span style={{ fontSize: 10, color: '#ffd700', fontWeight: 'bold' }}>
+              ×{(level?.statBonus || 1).toFixed(2)}
+            </span>
+          </div>
+          <div style={styles.xpBar}>
+            <div style={{ ...styles.xpFill, width: `${level?.progressPct || 0}%` }} />
+          </div>
         </div>
 
         {/* 에너지 */}
@@ -132,7 +150,12 @@ export default function GuardianPanel() {
           <div style={styles.formationRow}>
             <div style={{ fontSize: 10, color: '#aaa', marginBottom: 4 }}>진영 효율</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-              <span style={{ color: '#aaa' }}>고정 수호신 {guardian.formation.fixedGuardianCount}개</span>
+              <span style={{ color: '#aaa' }}>
+                고정 수호신 {guardian.formation.fixedGuardianCount}/{guardian.formation.freeSlots || 1}
+                {guardian.formation.fixedGuardianCount > (guardian.formation.freeSlots || 1) && (
+                  <span style={{ color: '#ff8855', marginLeft: 4 }}>(초과)</span>
+                )}
+              </span>
               <span style={{ color: guardian.formation.distributionPenalty < 0.7 ? '#ff6666' : '#ddd', fontWeight: 'bold' }}>
                 ×{guardian.formation.distributionPenalty.toFixed(2)}
               </span>
@@ -145,7 +168,7 @@ export default function GuardianPanel() {
             </div>
             {guardian.formation.distributionPenalty < 0.6 && (
               <div style={{ fontSize: 10, color: '#ff8855', marginTop: 4 }}>
-                ⚠ 분산 과다 — 동맹과 연결하면 시너지 회복
+                ⚠ 무료 슬롯 초과 — 레벨업 또는 동맹과 연결하세요
               </div>
             )}
           </div>
@@ -309,6 +332,26 @@ const styles = {
     padding: '8px 6px',
     marginTop: 6,
     borderRadius: 4
+  },
+  levelRow: {
+    marginBottom: 8,
+    padding: '4px 0'
+  },
+  levelInfo: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    marginBottom: 3
+  },
+  xpBar: {
+    height: 5,
+    background: '#222',
+    borderRadius: 3,
+    overflow: 'hidden'
+  },
+  xpFill: {
+    height: '100%',
+    background: 'linear-gradient(90deg, #ffd700, #ff8800)',
+    transition: 'width 0.5s ease'
   },
   createBtn: {
     background: '#00ff88',

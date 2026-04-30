@@ -224,6 +224,7 @@ router.post('/attack', async (req, res) => {
 
         await client.query("UPDATE users SET battle_wins = COALESCE(battle_wins, 0) + 1, battle_wins_season = COALESCE(battle_wins_season, 0) + 1 WHERE id = $1", [attackerId])
         graduated = await checkGraduation(client, attackerId)
+        await require('../levels').gainXp(client, attackerId, 50, 'battle_win').catch(() => {})
         await logActivity(client, defenderId, 'attacked_by', { attackerId, territoryId, winner: 'attacker' })
       } else {
         await logActivity(client, defenderId, 'attacked_by', { attackerId, territoryId, winner: 'defender' })
@@ -562,6 +563,7 @@ router.post('/execute', async (req, res) => {
 
         await client.query("UPDATE users SET battle_wins=COALESCE(battle_wins,0)+1, battle_wins_season=COALESCE(battle_wins_season,0)+1 WHERE id=$1", [b.attacker_id])
         graduated = await checkGraduation(client, b.attacker_id)
+        await require('../levels').gainXp(client, b.attacker_id, 50, 'battle_win').catch(() => {})
         await logActivity(client, b.defender_id, 'attacked_by', { attackerId: b.attacker_id, territoryId: b.territory_id, winner: 'attacker' })
       } else {
         await logActivity(client, b.defender_id, 'attacked_by', { attackerId: b.attacker_id, territoryId: b.territory_id, winner: 'defender' })
@@ -800,6 +802,7 @@ router.post('/execute-player', async (req, res) => {
         await client.query('UPDATE users SET energy_currency=energy_currency+5 WHERE id=$1', [b.attacker_id])
         await client.query("UPDATE users SET battle_wins=COALESCE(battle_wins,0)+1, battle_wins_season=COALESCE(battle_wins_season,0)+1 WHERE id=$1", [b.attacker_id])
         graduated = await checkGraduation(client, b.attacker_id)
+        await require('../levels').gainXp(client, b.attacker_id, 50, 'battle_win').catch(() => {})
         await logActivity(client, b.defender_id, 'attacked_by', { attackerId: b.attacker_id, winner: 'attacker' })
       } else {
         await logActivity(client, b.defender_id, 'attacked_by', { attackerId: b.attacker_id, winner: 'defender' })
@@ -906,6 +909,7 @@ router.post('/attack-fixed-guardian', async (req, res) => {
 
         await client.query("UPDATE users SET battle_wins=COALESCE(battle_wins,0)+1 WHERE id=$1", [attackerId])
         graduated = await checkGraduation(client, attackerId)
+        await require('../levels').gainXp(client, attackerId, 50, 'battle_win').catch(() => {})
       } else {
         await client.query(
           `UPDATE guardians SET hp=GREATEST(1,hp-$1) WHERE user_id=$2`,

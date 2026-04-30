@@ -65,7 +65,10 @@ function generatePartStats(slot, tier, guardianType) {
 }
 
 // 장착 파츠 기반 유효 스탯 계산 (export용)
-// 추가: 고정 수호신 분산 패널티 (1/sqrt(N)), 동맹 시너지 (+5%/연결, 최대 +30%)
+// 분산 패널티 = 1 / sqrt(max(1, fgCount - freeSlots(level) + 1))
+// 동맹 시너지 = +5%/연결, 최대 +30%
+// 레벨 보너스 = 1.0 + (level-1)*0.02
+const { getLevelInfo } = require('../levels')
 async function computeEffectiveStats(userId, baseStats) {
   const equipped = await db.query(
     'SELECT * FROM parts WHERE user_id = $1 AND equipped = true',
@@ -90,12 +93,19 @@ async function computeEffectiveStats(userId, baseStats) {
     }
   }
 
-  // ─── 분산 패널티 ───
+  // ─── 레벨 정보 + 분산 패널티 ───
+  const levelInfo = await getLevelInfo(userId).catch(() => null)
+  const lv = levelInfo?.level || 1
+  const free = levelInfo?.freeSlots || 1
+  const lvBonus = levelInfo?.statBonus || 1.0
+
   let penalty = 1.0, fgCount = 0, synergyCount = 0
   try {
     const fg = await db.query(`SELECT COUNT(*) AS cnt FROM fixed_guardians WHERE user_id=$1`, [userId])
     fgCount = parseInt(fg.rows[0]?.cnt) || 0
-    if (fgCount > 1) penalty = 1.0 / Math.sqrt(fgCount)
+    // freeSlots 만큼은 페널티 면제, 그 이후 누적
+    const overflow = Math.max(0, fgCount - free)
+    if (overflow > 0) penalty = 1.0 / Math.sqrt(overflow + 1)
   } catch {}
 
   // ─── 동맹 시너지 (대략적 — formation.js 정밀 계산은 별도) ───
@@ -117,11 +127,11 @@ async function computeEffectiveStats(userId, baseStats) {
 
   const synBonus = 1.0 + Math.min(0.30, synergyCount * 0.05)
 
-  // 패널티 + 시너지 적용 (atk/def/hp/abs/prd/spd/rng/ter)
+  // 레벨 보너스 + 패널티 + 시너지 (atk/def/hp/abs/prd/spd/rng/ter)
   const numStats = ['atk', 'def', 'hp', 'abs', 'prd', 'spd', 'rng', 'ter']
   for (const k of numStats) {
     if (typeof stats[k] === 'number') {
-      stats[k] = Math.round(stats[k] * penalty * synBonus)
+      stats[k] = Math.round(stats[k] * lvBonus * penalty * synBonus)
     }
   }
 
@@ -129,11 +139,14 @@ async function computeEffectiveStats(userId, baseStats) {
     stats,
     equippedParts: equipped.rows,
     activePassives,
+    level: levelInfo,
     formation: {
       fixedGuardianCount: fgCount,
+      freeSlots: free,
       distributionPenalty: penalty,
       friendlyLinks: synergyCount,
-      synergyBonus: synBonus
+      synergyBonus: synBonus,
+      levelStatBonus: lvBonus
     }
   }
 }
@@ -252,7 +265,11 @@ router.post('/combine', async (req, res) => {
     const currentTier = tiers[0]
     const slot = slots[0]
     const gType = parts.rows[0].guardian_type
-    const successRate = COMBINE_RATES[currentTier] || 0.5
+
+    // 레벨 보너스 반영 (L7+: +5%, L10+: +10%, L15+: +15%)
+    const levelInfo = await getLevelInfo(userId).catch(() => null)
+    const baseRate = COMBINE_RATES[currentTier] || 0.5
+    const successRate = Math.min(0.95, baseRate + (levelInfo?.combineRateBonus || 0))
 
     // 소스 파츠 삭제 (성공 여부 무관)
     await db.query('DELETE FROM parts WHERE id = ANY($1)', [partIds])
@@ -266,10 +283,15 @@ router.post('/combine', async (req, res) => {
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
         [userId, slot, newTier, gType, JSON.stringify(stat_bonuses), JSON.stringify(passives)]
       )
+      // XP: 합성 성공 시 newTier × 10
+      const { gainXp } = require('../levels')
+      const lvResult = await gainXp(null, userId, newTier * 10, 'combine_success')
       return res.json({
         success: true, result: 'success', part: newPart.rows[0],
         successRate: Math.round(successRate * 100),
-        message: `합성 성공! T${newTier} 파츠 획득`
+        message: `합성 성공! T${newTier} 파츠 획득`,
+        xpGained: newTier * 10,
+        levelUp: lvResult?.leveledUp ? lvResult : null
       })
     }
 

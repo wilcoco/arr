@@ -12,6 +12,7 @@ export const useGameStore = create((set, get) => ({
   energy: 100,
   layer: 'beginner',
   battleWins: 0,
+  level: { level: 1, xp: 0, currentLevelXp: 0, nextLevelXp: 100, progressPct: 0, freeSlots: 1, statBonus: 1.0, isMaxLevel: false },
   graduatedAt: null,
 
   // AR 모드
@@ -85,6 +86,7 @@ export const useGameStore = create((set, get) => ({
           energy: data.energy,
           layer: data.layer || 'beginner',
           battleWins: data.battleWins || 0,
+          level: data.level || get().level,
           graduatedAt: data.graduatedAt || null
         })
 

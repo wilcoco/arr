@@ -92,12 +92,22 @@ router.get('/summary/:userId', async (req, res) => {
 })
 
 // POST /api/activity/ping — 앱 실행 중 주기적으로 last_seen_at 갱신
+// 하루에 한 번 첫 핑 시 일일 보너스 XP +25
 router.post('/ping', async (req, res) => {
   try {
     const { userId } = req.body
     if (!userId) return res.json({ success: false })
+
+    // 일일 첫 접속 체크 (last_seen_at이 24시간 이상 전이면 보너스)
+    const u = await db.query('SELECT last_seen_at FROM users WHERE id=$1', [userId])
+    const last = u.rows[0]?.last_seen_at
+    let dailyBonus = null
+    if (!last || (Date.now() - new Date(last).getTime()) > 24 * 60 * 60 * 1000) {
+      dailyBonus = await require('../levels').gainXp(null, userId, 25, 'daily_login').catch(() => null)
+    }
+
     await db.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId])
-    res.json({ success: true })
+    res.json({ success: true, dailyBonus })
   } catch (err) {
     res.status(500).json({ success: false, error: err.message })
   }

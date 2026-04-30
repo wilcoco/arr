@@ -222,17 +222,28 @@ export default function App() {
     }
   }, [visitorId])
 
-  // 주기적 ping (last_seen_at 갱신, 오프라인 요약 정확도용)
+  // 주기적 ping (last_seen_at 갱신, 일일 보너스 XP 수령)
   useEffect(() => {
     const { userId } = useGameStore.getState()
     if (!userId) return
-    const id = setInterval(() => {
-      fetch(`${import.meta.env.VITE_API_URL || ''}/api/activity/ping`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId })
-      }).catch(() => {})
-    }, 60000) // 1분마다
+
+    const doPing = async () => {
+      try {
+        const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/activity/ping`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId })
+        })
+        const data = await res.json()
+        if (data.dailyBonus) {
+          const showToast = useGameStore.getState().showToast
+          showToast(`📅 일일 접속 보너스 +25 XP${data.dailyBonus.leveledUp ? ` · 🎉 레벨업! Lv.${data.dailyBonus.level}` : ''}`, 'success')
+          useGameStore.getState().loadUserData()
+        }
+      } catch {}
+    }
+    doPing() // 즉시 한 번 (일일 체크)
+    const id = setInterval(doPing, 60000)
     return () => clearInterval(id)
   }, [visitorId])
 

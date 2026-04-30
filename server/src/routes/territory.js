@@ -93,6 +93,9 @@ router.post('/expand', async (req, res) => {
     )
 
     const r0 = result.rows[0]
+    // XP: 영역 확장 시 +20
+    const lvResult = await require('../levels').gainXp(null, userId, 20, 'territory_expand').catch(() => null)
+
     res.json({
       success: true,
       territory: {
@@ -102,7 +105,9 @@ router.post('/expand', async (req, res) => {
         radius: parseFloat(radius) || 0,
         vulnerable_until: '',
         tower_type: r0.tower_type || 'normal'
-      }
+      },
+      xpGained: 20,
+      levelUp: lvResult?.leveledUp ? lvResult : null
     })
   } catch (err) {
     console.error('Territory expand error:', err)

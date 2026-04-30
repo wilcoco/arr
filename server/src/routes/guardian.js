@@ -161,7 +161,8 @@ router.get('/:visitorId', async (req, res) => {
 
     // 장착 파츠 유효 스탯
     const { computeEffectiveStats } = require('./parts')
-    const { stats: effectiveStats, equippedParts, activePassives } = await computeEffectiveStats(g.user_id, base)
+    const effectiveResult = await computeEffectiveStats(g.user_id, base)
+    const { stats: effectiveStats, equippedParts, activePassives, level: levelInfo, formation } = effectiveResult
 
     res.json({
       guardian: {
@@ -170,13 +171,15 @@ router.get('/:visitorId', async (req, res) => {
         stats: base,
         effectiveStats: effectiveStats || base,
         equippedParts: equippedParts || [],
-        activePassives: activePassives || []
+        activePassives: activePassives || [],
+        formation: formation || null
       },
       userId: g.user_id || '',
       energy: num(g.energy_currency),
       layer: g.user_layer || 'beginner',
       battleWins: num(g.battle_wins),
-      graduatedAt: g.graduated_at ? new Date(g.graduated_at).toISOString() : ''
+      graduatedAt: g.graduated_at ? new Date(g.graduated_at).toISOString() : '',
+      level: levelInfo
     })
   } catch (err) {
     console.error('Guardian get error:', err)

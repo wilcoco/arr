@@ -168,6 +168,11 @@ async function migrate() {
     await safeAddColumn('battles', 'expires_at', 'TIMESTAMP')
     await safeAddColumn('alliance_requests', 'expires_at', 'TIMESTAMP')
 
+    // 레벨/XP 시스템
+    await safeAddColumn('users', 'level', 'INT DEFAULT 1')
+    await safeAddColumn('users', 'xp',    'INT DEFAULT 0')
+    await safeAddColumn('users', 'last_xp_event_at', 'TIMESTAMP')
+
     // 바둑 호구(atari) 시스템
     await safeAddColumn('territories', 'atari_started_at', 'TIMESTAMP')
     await safeAddColumn('territories', 'atari_damage',     'INT DEFAULT 0')
