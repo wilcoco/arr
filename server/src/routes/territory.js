@@ -198,7 +198,9 @@ router.get('/nearby', async (req, res) => {
         center: { lat: fnum(t.center_lat), lng: fnum(t.center_lng) },
         radius: fnum(t.radius),
         vulnerable_until: t.vulnerable_until ? new Date(t.vulnerable_until).toISOString() : '',
-        tower_type: t.tower_type || 'normal'
+        tower_type: t.tower_type || 'normal',
+        atari_started_at: t.atari_started_at ? new Date(t.atari_started_at).toISOString() : '',
+        in_eye_zone: !!t.in_eye_zone
       }))
     })
   } catch (err) {

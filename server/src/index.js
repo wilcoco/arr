@@ -13,6 +13,8 @@ const partsRoutes = require('./routes/parts');
 const { generatePartStats } = require('./routes/parts');
 const activityRoutes = require('./routes/activity');
 const fixedGuardianRoutes = require('./routes/fixedGuardian');
+const formationRoutes = require('./routes/formation');
+const { computeFormation, ATARI_DURATION_MS, ATARI_DAMAGE_PER_HOUR } = require('./routes/formation');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -175,6 +177,77 @@ async function runEconomyTick() {
       }
     }
 
+    // 8.5. 바둑 호구(atari) 시스템 — 매 tick 진행
+    let atariStarted = 0, atariResolved = 0, atariCaptures = 0
+    try {
+      const f = await computeFormation()
+      const now = new Date()
+
+      // 현재 atari 상태인 영역들 일괄 갱신
+      for (const t of f.territories) {
+        const isAtari = f.atariMap.has(t.id)
+        const r = await db.query('SELECT atari_started_at, atari_damage FROM territories WHERE id=$1', [t.id])
+        const cur = r.rows[0]
+        if (!cur) continue
+
+        if (isAtari) {
+          const info = f.atariMap.get(t.id)
+          if (!cur.atari_started_at) {
+            // 새로 atari 진입
+            await db.query(
+              `UPDATE territories
+               SET atari_started_at=NOW(), atari_attacker_ids=$2, atari_damage=$3
+               WHERE id=$1`,
+              [t.id, JSON.stringify(info.attackerUserIds), ATARI_DAMAGE_PER_HOUR]
+            )
+            atariStarted++
+          } else {
+            // 이미 atari — 데미지 누적
+            const elapsed = now - new Date(cur.atari_started_at)
+            const newDamage = (cur.atari_damage || 0) + ATARI_DAMAGE_PER_HOUR
+            await db.query(
+              `UPDATE territories SET atari_damage=$2, atari_attacker_ids=$3 WHERE id=$1`,
+              [t.id, newDamage, JSON.stringify(info.attackerUserIds)]
+            )
+
+            // 24시간 경과 → 자동 점령
+            if (elapsed >= ATARI_DURATION_MS) {
+              const newOwner = info.attackerUserIds[0]  // 첫 공격자에게 이전
+              if (newOwner) {
+                await db.query(
+                  `UPDATE territories
+                   SET user_id=$2, atari_started_at=NULL, atari_damage=0, atari_attacker_ids='[]', vulnerable_until=NULL
+                   WHERE id=$1`,
+                  [t.id, newOwner]
+                )
+                await db.query(`DELETE FROM fixed_guardians WHERE territory_id=$1`, [t.id])
+                atariCaptures++
+              }
+            }
+          }
+        } else {
+          // atari 해제
+          if (cur.atari_started_at) {
+            await db.query(
+              `UPDATE territories
+               SET atari_started_at=NULL, atari_damage=0, atari_attacker_ids='[]'
+               WHERE id=$1`,
+              [t.id]
+            )
+            atariResolved++
+          }
+        }
+      }
+
+      // 눈(eye) 표시
+      for (const t of f.territories) {
+        const inEye = f.eyeSet.has(t.id)
+        await db.query(`UPDATE territories SET in_eye_zone=$2 WHERE id=$1`, [t.id, inEye])
+      }
+    } catch (e) {
+      console.error('[Economy] formation tick error:', e.message)
+    }
+
     // 9. 만료된 pending 전투/동맹 정리
     const expiredBattles = await db.query(
       `UPDATE battles SET status='expired'
@@ -185,7 +258,7 @@ async function runEconomyTick() {
        WHERE status='pending' AND expires_at < NOW() RETURNING id`
     )
 
-    console.log(`[Economy] tick complete — ${expired.rows.length} terr expired, ${partsDropped} direct parts, ${partsToStorage} storage parts, ${energyAuto} energy auto, ${expiredBattles.rows.length} battles + ${expiredAlliances.rows.length} alliances expired`)
+    console.log(`[Economy] tick — ${expired.rows.length} expired terr, ${partsDropped} parts(direct), ${partsToStorage} parts(storage), ${energyAuto} energy auto, ${expiredBattles.rows.length} battles + ${expiredAlliances.rows.length} alliances expired, atari[+${atariStarted}/-${atariResolved}/cap${atariCaptures}]`)
   } catch (err) {
     console.error('[Economy] tick error:', err.message)
   }
@@ -213,6 +286,7 @@ app.use('/api/alliance', allianceRoutes);
 app.use('/api/parts', partsRoutes);
 app.use('/api/activity', activityRoutes);
 app.use('/api/fixed-guardian', fixedGuardianRoutes);
+app.use('/api/formation', formationRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

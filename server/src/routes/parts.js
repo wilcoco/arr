@@ -65,6 +65,7 @@ function generatePartStats(slot, tier, guardianType) {
 }
 
 // 장착 파츠 기반 유효 스탯 계산 (export용)
+// 추가: 고정 수호신 분산 패널티 (1/sqrt(N)), 동맹 시너지 (+5%/연결, 최대 +30%)
 async function computeEffectiveStats(userId, baseStats) {
   const equipped = await db.query(
     'SELECT * FROM parts WHERE user_id = $1 AND equipped = true',
@@ -88,7 +89,53 @@ async function computeEffectiveStats(userId, baseStats) {
       activePassives.push({ id: pid, ...p })
     }
   }
-  return { stats, equippedParts: equipped.rows, activePassives }
+
+  // ─── 분산 패널티 ───
+  let penalty = 1.0, fgCount = 0, synergyCount = 0
+  try {
+    const fg = await db.query(`SELECT COUNT(*) AS cnt FROM fixed_guardians WHERE user_id=$1`, [userId])
+    fgCount = parseInt(fg.rows[0]?.cnt) || 0
+    if (fgCount > 1) penalty = 1.0 / Math.sqrt(fgCount)
+  } catch {}
+
+  // ─── 동맹 시너지 (대략적 — formation.js 정밀 계산은 별도) ───
+  try {
+    const syn = await db.query(`
+      SELECT COUNT(DISTINCT a.id) AS link_cnt
+      FROM territories t
+      JOIN territories a ON a.id != t.id
+      LEFT JOIN alliances al ON
+        (al.user_id_1 = t.user_id AND al.user_id_2 = a.user_id) OR
+        (al.user_id_2 = t.user_id AND al.user_id_1 = a.user_id)
+      WHERE t.user_id = $1
+        AND (a.user_id = t.user_id OR (al.active = true))
+        AND SQRT(POW((a.center_lat-t.center_lat)*111000,2)+POW((a.center_lng-t.center_lng)*88700,2))
+            < (a.radius + t.radius) * 1.5
+    `, [userId])
+    synergyCount = parseInt(syn.rows[0]?.link_cnt) || 0
+  } catch {}
+
+  const synBonus = 1.0 + Math.min(0.30, synergyCount * 0.05)
+
+  // 패널티 + 시너지 적용 (atk/def/hp/abs/prd/spd/rng/ter)
+  const numStats = ['atk', 'def', 'hp', 'abs', 'prd', 'spd', 'rng', 'ter']
+  for (const k of numStats) {
+    if (typeof stats[k] === 'number') {
+      stats[k] = Math.round(stats[k] * penalty * synBonus)
+    }
+  }
+
+  return {
+    stats,
+    equippedParts: equipped.rows,
+    activePassives,
+    formation: {
+      fixedGuardianCount: fgCount,
+      distributionPenalty: penalty,
+      friendlyLinks: synergyCount,
+      synergyBonus: synBonus
+    }
+  }
 }
 
 // ─── 라우터 ───────────────────────────────────────────────────────

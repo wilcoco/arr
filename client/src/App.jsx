@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { MapContainer, TileLayer, Marker, Circle, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Circle, Polyline, Polygon, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
@@ -164,6 +164,7 @@ export default function App() {
   const {
     visitorId,
     userLocation,
+    userId,
     guardian,
     territories,
     nearbyTerritories,
@@ -172,6 +173,7 @@ export default function App() {
     expandingTerritory,
     toast,
     fixedGuardianStorage,
+    formationData,
     setUserLocation,
     setVisitorId,
     setArMode,
@@ -180,8 +182,17 @@ export default function App() {
     initiatePlayerEncounter,
     initiateFixedGuardianAttack,
     collectFromGuardian,
-    fetchStorageSummary
+    fetchStorageSummary,
+    fetchFormation
   } = useGameStore()
+
+  // 진영 상태 60초마다 동기화
+  useEffect(() => {
+    if (!visitorId) return
+    fetchFormation()
+    const id = setInterval(fetchFormation, 60000)
+    return () => clearInterval(id)
+  }, [visitorId])
 
   // 50m 이내 + 누적된 고정 수호신 (Collect 가능)
   const collectibleGuardians = (fixedGuardianStorage || []).filter(g => {
@@ -384,6 +395,51 @@ export default function App() {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+
+        {/* 진영(formation) 오버레이 — 연결선 / 호구(atari) / 눈 영역 */}
+        {formationData && (() => {
+          const tById = Object.fromEntries((formationData.territories || []).map(t => [t.id, t]))
+          return (
+            <>
+              {/* 연결선 — 자기 진영 = 초록, 적과 인접 = 빨강 (호구 표시) */}
+              {(formationData.links || []).map((l, i) => {
+                const a = tById[l.a], b = tById[l.b]
+                if (!a || !b) return null
+                const isMineLink = a.userId === userId || b.userId === userId
+                const color = l.friendly
+                  ? (isMineLink ? '#00ff88' : '#ffd700')   // 내 진영: 에메랄드, 다른 동맹: 골드
+                  : '#ff4444'                              // 적대: 빨강
+                return (
+                  <Polyline
+                    key={i}
+                    positions={[[a.center.lat, a.center.lng], [b.center.lat, b.center.lng]]}
+                    pathOptions={{ color, weight: l.friendly ? 3 : 2, opacity: 0.65, dashArray: l.friendly ? null : '5,5' }}
+                  />
+                )
+              })}
+
+              {/* 호구(atari) 영역 — 빨간 펄스 원 */}
+              {(formationData.territories || []).filter(t => t.atari).map(t => (
+                <Circle
+                  key={`atari-${t.id}`}
+                  center={[t.center.lat, t.center.lng]}
+                  radius={t.radius * 1.2}
+                  pathOptions={{ color: '#ff0044', weight: 3, fillColor: '#ff0044', fillOpacity: 0.15, dashArray: '8,4' }}
+                />
+              ))}
+
+              {/* 눈(eye) 영역 — 안전지대 */}
+              {(formationData.territories || []).filter(t => t.inEye && t.userId === userId).map(t => (
+                <Circle
+                  key={`eye-${t.id}`}
+                  center={[t.center.lat, t.center.lng]}
+                  radius={t.radius * 1.05}
+                  pathOptions={{ color: '#88ffaa', weight: 1, fillColor: '#88ffaa', fillOpacity: 0.20 }}
+                />
+              ))}
+            </>
+          )
+        })()}
 
         {userLocation && (
           <MapController center={userLocation} />

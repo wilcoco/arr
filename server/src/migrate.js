@@ -168,6 +168,12 @@ async function migrate() {
     await safeAddColumn('battles', 'expires_at', 'TIMESTAMP')
     await safeAddColumn('alliance_requests', 'expires_at', 'TIMESTAMP')
 
+    // 바둑 호구(atari) 시스템
+    await safeAddColumn('territories', 'atari_started_at', 'TIMESTAMP')
+    await safeAddColumn('territories', 'atari_damage',     'INT DEFAULT 0')
+    await safeAddColumn('territories', 'atari_attacker_ids', 'JSONB DEFAULT \'[]\'')
+    await safeAddColumn('territories', 'in_eye_zone',      'BOOLEAN DEFAULT false')
+
     // 고정 수호신 저장소 (생산 누적 → 현장 수령 모델)
     await safeAddColumn('fixed_guardians', 'storage_capacity', 'INT DEFAULT 5')
     await safeAddColumn('fixed_guardians', 'last_produced_at', 'TIMESTAMP DEFAULT NOW()')

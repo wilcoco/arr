@@ -126,6 +126,30 @@ export default function GuardianPanel() {
             ))}
           </div>
         )}
+
+        {/* 진영(formation) 효율 표시 — 바둑 시스템 */}
+        {expanded && guardian.formation && (
+          <div style={styles.formationRow}>
+            <div style={{ fontSize: 10, color: '#aaa', marginBottom: 4 }}>진영 효율</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+              <span style={{ color: '#aaa' }}>고정 수호신 {guardian.formation.fixedGuardianCount}개</span>
+              <span style={{ color: guardian.formation.distributionPenalty < 0.7 ? '#ff6666' : '#ddd', fontWeight: 'bold' }}>
+                ×{guardian.formation.distributionPenalty.toFixed(2)}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 2 }}>
+              <span style={{ color: '#aaa' }}>동맹 연결 {guardian.formation.friendlyLinks}개</span>
+              <span style={{ color: guardian.formation.synergyBonus > 1 ? '#00ff88' : '#888', fontWeight: 'bold' }}>
+                ×{guardian.formation.synergyBonus.toFixed(2)}
+              </span>
+            </div>
+            {guardian.formation.distributionPenalty < 0.6 && (
+              <div style={{ fontSize: 10, color: '#ff8855', marginTop: 4 }}>
+                ⚠ 분산 과다 — 동맹과 연결하면 시너지 회복
+              </div>
+            )}
+          </div>
+        )}
       </div>
     )
   }
@@ -277,6 +301,13 @@ const styles = {
     color: '#00ff88',
     fontSize: 10,
     padding: '2px 5px',
+    borderRadius: 4
+  },
+  formationRow: {
+    background: 'rgba(255,255,255,0.04)',
+    borderTop: '1px solid #333',
+    padding: '8px 6px',
+    marginTop: 6,
     borderRadius: 4
   },
   createBtn: {

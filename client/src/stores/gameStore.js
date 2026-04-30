@@ -301,6 +301,16 @@ export const useGameStore = create((set, get) => ({
     }
   },
 
+  // ─── 진영(formation) 상태 — 바둑 시각화용 ──────────────────
+  formationData: null, // { territories, links, synergyByUser, eyeIds, atariCount }
+  fetchFormation: async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/formation/state`)
+      const data = await res.json()
+      if (data.success) set({ formationData: data })
+    } catch (err) { console.error('Fetch formation error:', err) }
+  },
+
   // ─── 고정 수호신 저장소 (생산 누적/수령) ─────────────────────
   fixedGuardianStorage: [], // [{id, territoryId, center, capacity, storedCount, isFull}]
   fetchStorageSummary: async () => {
