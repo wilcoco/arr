@@ -102,40 +102,82 @@ const playerIcon = L.divIcon({
   iconAnchor: [10, 10]
 })
 
-// 수호신 아이콘 생성 (내 수호신 - 금색)
+// 인라인 SVG 마커 (간단 픽토그램 — 외부 에셋 의존 0)
+const guardianSvgHtml = (type, color = '#FFD700') => {
+  if (type === 'animal') return `
+    <svg viewBox="0 0 64 64" width="40" height="40">
+      <ellipse cx="32" cy="58" rx="14" ry="2" fill="#000" opacity="0.3"/>
+      <ellipse cx="32" cy="36" rx="20" ry="13" fill="${color}"/>
+      <circle cx="48" cy="22" r="10" fill="${color}"/>
+      <polygon points="44,12 47,18 41,18" fill="${color}"/>
+      <polygon points="52,12 55,18 49,18" fill="${color}"/>
+      <circle cx="46" cy="22" r="1.6" fill="#111"/>
+      <circle cx="51" cy="22" r="1.6" fill="#111"/>
+      <rect x="14" y="40" width="6" height="14" fill="${color}"/>
+      <rect x="22" y="40" width="6" height="14" fill="${color}"/>
+      <rect x="36" y="40" width="6" height="14" fill="${color}"/>
+      <rect x="44" y="40" width="6" height="14" fill="${color}"/>
+    </svg>`
+  if (type === 'robot') return `
+    <svg viewBox="0 0 64 64" width="40" height="40">
+      <ellipse cx="32" cy="58" rx="14" ry="2" fill="#000" opacity="0.3"/>
+      <rect x="14" y="22" width="36" height="24" rx="3" fill="${color}"/>
+      <rect x="22" y="8" width="20" height="14" rx="2" fill="${color}"/>
+      <rect x="20" y="42" width="8" height="14" fill="${color}"/>
+      <rect x="36" y="42" width="8" height="14" fill="${color}"/>
+      <line x1="32" y1="2" x2="32" y2="8" stroke="${color}" stroke-width="2"/>
+      <circle cx="32" cy="2" r="2" fill="#ff4444"/>
+      <rect x="26" y="13" width="3" height="3" fill="#0f0"/>
+      <rect x="35" y="13" width="3" height="3" fill="#0f0"/>
+      <circle cx="32" cy="34" r="3" fill="#fff"/>
+    </svg>`
+  // aircraft
+  return `
+    <svg viewBox="0 0 64 64" width="40" height="40">
+      <ellipse cx="32" cy="58" rx="14" ry="2" fill="#000" opacity="0.3"/>
+      <polygon points="2,38 32,32 2,46" fill="${color}"/>
+      <polygon points="62,38 32,32 62,46" fill="${color}"/>
+      <ellipse cx="32" cy="38" rx="28" ry="9" fill="${color}"/>
+      <ellipse cx="42" cy="36" rx="6" ry="4" fill="#88ddff" opacity="0.7"/>
+      <circle cx="32" cy="38" r="4" fill="#fff"/>
+    </svg>`
+}
+
+// 내 수호신 (금빛)
 const createGuardianIcon = (type) => L.divIcon({
   className: 'guardian-marker',
-  html: `<div style="font-size:32px;filter:drop-shadow(0 0 8px gold);">${
-    type === 'animal' ? '🦁' : type === 'robot' ? '🤖' : '✈️'
-  }</div>`,
-  iconSize: [32, 32],
-  iconAnchor: [16, 32]
+  html: `<div style="filter:drop-shadow(0 0 8px gold);">${guardianSvgHtml(type, '#FFD700')}</div>`,
+  iconSize: [40, 40], iconAnchor: [20, 38]
 })
 
-// 다른 플레이어 아이콘 생성 (빨간색 테두리)
+// 다른 플레이어 (빨강)
 const createOtherPlayerIcon = (type, username) => L.divIcon({
   className: 'other-player-marker',
   html: `<div style="text-align:center;">
-    <div style="font-size:28px;filter:drop-shadow(0 0 6px #ff4444);">${
-      type === 'animal' ? '🦁' : type === 'robot' ? '🤖' : type === 'aircraft' ? '✈️' : '👤'
-    }</div>
-    <div style="font-size:10px;color:white;background:#ff4444;padding:2px 6px;border-radius:4px;margin-top:-5px;">${username}</div>
+    <div style="filter:drop-shadow(0 0 6px #ff4444);">${guardianSvgHtml(type, '#ff5566')}</div>
+    <div style="font-size:10px;color:white;background:#ff4444;padding:2px 6px;border-radius:4px;margin-top:-4px;">${username}</div>
   </div>`,
-  iconSize: [50, 50],
-  iconAnchor: [25, 40]
+  iconSize: [50, 56], iconAnchor: [25, 50]
 })
 
-// 고정 수호신 아이콘 (방어형: 파란색, 생산형: 노란색)
+// 고정 수호신 (방어=파랑, 생산=금)
+const fixedGuardianSvg = (isProduction) => `
+  <svg viewBox="0 0 48 48" width="32" height="32">
+    <rect x="6" y="14" width="36" height="28" rx="3" fill="${isProduction ? '#ffcc00' : '#4488ff'}"/>
+    <polygon points="24,2 38,14 10,14" fill="${isProduction ? '#ffaa00' : '#3366cc'}"/>
+    ${isProduction
+      ? '<circle cx="24" cy="28" r="6" fill="#fff" opacity="0.9"/><circle cx="24" cy="28" r="3" fill="#ffcc00"/>'
+      : '<rect x="18" y="22" width="12" height="14" fill="#fff" opacity="0.9"/><polygon points="24,18 28,22 20,22" fill="#fff"/>'
+    }
+  </svg>`
+
 const createFixedGuardianIcon = (type, owner) => L.divIcon({
   className: 'fixed-guardian-marker',
   html: `<div style="text-align:center;">
-    <div style="font-size:24px;filter:drop-shadow(0 0 6px ${type === 'production' ? '#ffd700' : '#4488ff'});">${
-      type === 'production' ? '⚙️' : '🛡️'
-    }</div>
-    <div style="font-size:9px;color:white;background:${type === 'production' ? '#ffd700' : '#4488ff'};padding:1px 4px;border-radius:3px;color:black;">${owner}</div>
+    <div style="filter:drop-shadow(0 0 6px ${type === 'production' ? '#ffd700' : '#4488ff'});">${fixedGuardianSvg(type === 'production')}</div>
+    <div style="font-size:9px;color:black;background:${type === 'production' ? '#ffd700' : '#4488ff'};padding:1px 4px;border-radius:3px;">${owner}</div>
   </div>`,
-  iconSize: [40, 40],
-  iconAnchor: [20, 35]
+  iconSize: [40, 50], iconAnchor: [20, 42]
 })
 
 // 맵 중심 이동 컴포넌트

@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useGameStore } from '../stores/gameStore'
+import PartIcon, { TIER_COLORS } from '../art/PartSvg'
 
 const SLOT_LABELS = { head: '헤드', body: '바디', arms: '암즈', legs: '레그', core: '코어' }
-const SLOT_ICONS  = { head: '🪖', body: '🛡️', arms: '⚔️', legs: '👟', core: '⚙️' }
 const TIER_STARS  = (t) => '★'.repeat(t) + '☆'.repeat(5 - t)
-const TIER_COLOR  = ['', '#aaa', '#4fc', '#a78bfa', '#f59e0b', '#f43f5e']
+const TIER_COLOR  = TIER_COLORS
 const COMBINE_RATES = { 1: 70, 2: 55, 3: 40, 4: 25 }
 
 export default function PartsPanel({ onClose }) {
@@ -60,8 +60,9 @@ export default function PartsPanel({ onClose }) {
             <button
               key={s}
               onClick={() => setFilter(s)}
-              style={{ ...styles.filterBtn, background: filter === s ? '#00ff88' : '#222', color: filter === s ? 'black' : 'white' }}
-            >{SLOT_ICONS[s]}</button>
+              style={{ ...styles.filterBtn, background: filter === s ? '#00ff88' : '#222', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 4 }}
+              title={SLOT_LABELS[s]}
+            ><PartIcon slot={s} tier={1} size={28} /></button>
           ))}
         </div>
 
@@ -121,10 +122,10 @@ export default function PartsPanel({ onClose }) {
                 onClick={() => toggleSelect(part.id)}
               >
                 <div style={styles.cardLeft}>
-                  <span style={{ fontSize: 20 }}>{SLOT_ICONS[part.slot]}</span>
+                  <PartIcon slot={part.slot} tier={part.tier} size={48} glow={part.equipped} />
                   <div>
                     <div style={{ fontSize: 11, color: '#888' }}>{SLOT_LABELS[part.slot]}</div>
-                    <div style={{ fontSize: 12, color: TIER_COLOR[part.tier] }}>
+                    <div style={{ fontSize: 12, color: TIER_COLOR[part.tier] || '#888' }}>
                       {TIER_STARS(part.tier)}
                     </div>
                   </div>

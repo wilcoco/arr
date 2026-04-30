@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { useGameStore } from '../stores/gameStore'
+import { GuardianBase } from '../art/GuardianSvg'
+import { CharacterWithParts } from '../art/PartSvg'
 
 const GUARDIAN_TYPES = [
   { id: 'animal',   name: '동물형',  icon: '🦁', desc: '속도, 회복력 특화' },
@@ -42,11 +44,11 @@ export default function GuardianPanel() {
 
     return (
       <div style={styles.panel}>
-        {/* 레이어 배지 + 수호신 아이콘 + 레벨 */}
+        {/* 레이어 배지 + 수호신 SVG + 레벨 */}
         <div style={styles.header} onClick={() => setExpanded(e => !e)}>
-          <span style={{ fontSize: 22 }}>
-            {guardian.type === 'animal' ? '🦁' : guardian.type === 'robot' ? '🤖' : '✈️'}
-          </span>
+          <div style={{ width: 36, height: 36, marginRight: 6 }}>
+            <CharacterWithParts type={guardian.type} equippedParts={guardian.equippedParts || []} size={36} />
+          </div>
           <span style={{ flex: 1, fontWeight: 'bold', fontSize: 13 }}>
             Lv.{level?.level || 1} 수호신
           </span>
@@ -200,8 +202,8 @@ export default function GuardianPanel() {
               border: selectedType === type.id ? '2px solid #00ff88' : '2px solid #333'
             }}
           >
-            <div style={{ fontSize: 32 }}>{type.icon}</div>
-            <div style={{ fontWeight: 'bold', fontSize: 13 }}>{type.name}</div>
+            <GuardianBase type={type.id} size={64} />
+            <div style={{ fontWeight: 'bold', fontSize: 13, marginTop: 4 }}>{type.name}</div>
             <div style={{ fontSize: 11, color: '#888' }}>{type.desc}</div>
           </div>
         ))}

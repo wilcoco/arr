@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useGameStore } from '../stores/gameStore'
+import { GuardianBase } from '../art/GuardianSvg'
 
 export default function BattleModal() {
   const {
@@ -340,7 +341,7 @@ export default function BattleModal() {
             {/* 좌측 — 내 수호신 */}
             <div style={{ ...styles.fighter, transform: shakeSide === 'atk' ? 'translateX(-8px)' : 'none', transition: 'transform 0.15s' }}>
               <div style={styles.guardianIcon}>
-                {details.attacker?.type === 'animal' ? '🦁' : details.attacker?.type === 'robot' ? '🤖' : '✈️'}
+                <GuardianBase type={details.attacker?.type || 'animal'} size={56} glow={ultUsedDuringBattle} />
               </div>
               <div style={styles.fighterName}>{details.attacker?.name || '나'}</div>
               <div style={styles.hpBar}>
@@ -360,7 +361,7 @@ export default function BattleModal() {
             <div style={{ ...styles.fighter, transform: shakeSide === 'def' ? 'translateX(8px)' : 'none', transition: 'transform 0.15s' }}>
               <div style={styles.defenderGroup}>
                 <div style={styles.guardianIcon}>
-                  {details.defender?.type === 'animal' ? '🦁' : details.defender?.type === 'robot' ? '🤖' : '✈️'}
+                  <GuardianBase type={details.defender?.type || 'animal'} size={56} />
                 </div>
                 {details.fixedGuardians?.map((fg, i) => <div key={i} style={styles.fixedIcon}>{fg.type === 'production' ? '⚙️' : '🛡️'}</div>)}
                 {details.allyDefenders?.map((ad, i) => <div key={`ally-${i}`} style={styles.allyIcon}>🛡️</div>)}
