@@ -257,12 +257,10 @@ export default function App() {
   }, [userLocation])
 
   // storage 가득 알림 (한 번만)
-  const { showToast } = useGameStore.getState()
-  const fixedGuardianStorage = useGameStore(s => s.fixedGuardianStorage)
   useEffect(() => {
     const fullCount = (fixedGuardianStorage || []).filter(g => g.isFull).length
     if (fullCount > 0 && !storageFullWarned) {
-      showToast(`📦 저장소 ${fullCount}개 가득 — 생산 정지! 방문하여 수령하세요`, 'error')
+      useGameStore.getState().showToast(`📦 저장소 ${fullCount}개 가득 — 생산 정지! 방문하여 수령하세요`, 'error')
       setStorageFullWarned(true)
     } else if (fullCount === 0 && storageFullWarned) {
       setStorageFullWarned(false)
