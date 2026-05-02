@@ -112,6 +112,23 @@ async function runEconomyTick() {
     // 6.5. 모든 수호신 ult_charge 자연 충전 +5/시간 (cap 100)
     await db.query(`UPDATE guardians SET ult_charge = LEAST(100, COALESCE(ult_charge, 0) + 5)`)
 
+    // 6.6. Nature 타워 인접 회복 (자기/동맹 타워 HP +5%/tick, 50m 내)
+    try {
+      const natures = await db.query(`SELECT fg.id, fg.user_id, t.center_lat, t.center_lng FROM fixed_guardians fg
+                                       JOIN territories t ON fg.territory_id=t.id WHERE fg.tower_class='nature'`)
+      for (const n of natures.rows) {
+        await db.query(
+          `UPDATE fixed_guardians SET hp = LEAST(max_hp, hp + GREATEST(1, FLOOR(max_hp * 0.05)))
+           WHERE id IN (
+             SELECT fg2.id FROM fixed_guardians fg2 JOIN territories t2 ON fg2.territory_id=t2.id
+             WHERE fg2.user_id = $1
+               AND SQRT(POW((t2.center_lat - $2) * 111000, 2) + POW((t2.center_lng - $3) * 88700, 2)) < 50
+           )`,
+          [n.user_id, n.center_lat, n.center_lng]
+        ).catch(() => {})
+      }
+    } catch {}
+
     // 7. regenerate 패시브: 장착 중인 파츠에 regenerate 있는 수호신 HP 5% 회복
     await db.query(`
       UPDATE guardians g

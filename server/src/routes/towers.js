@@ -2,28 +2,52 @@ const express = require('express')
 const router = express.Router()
 const db = require('../db')
 
-// 타워 클래스 정의 (티어=1 기준 스탯; 티어×scalar 적용)
+// 13종 타워 (Piloto Studio TowerDefenseStarterPack 매핑)
+// effect 종류:
+//   aoe         : 폭발 반경(m) 내 모두 데미지
+//   burn        : N초 동안 매초 도트
+//   slow        : 적 이동/시너지 감소 N% × M초
+//   vulnerable  : 적 영역 vulnerable_until 연장
+//   chain       : 가까운 적 추가 타격
+//   heal_adj    : 인접 우호 타워 HP 회복
+//   poison_dot  : 누적 가능한 독 도트
+//   debuff_combine : 영역 내 적 합성 성공률 감소
+//   synergy_boost  : 동맹 시너지 보너스
 const TOWER_CLASSES = {
-  arrow:      { range: 80,  fireRateMs: 3000, baseDmg: 10, baseHp: 50,  aoe: 0,  effect: null,                      label: '화살탑',   icon: '🏹', cost: 30 },
-  cannon:     { range: 120, fireRateMs: 8000, baseDmg: 30, baseHp: 80,  aoe: 30, effect: null,                      label: '대포',     icon: '💣', cost: 60 },
-  magic:      { range: 60,  fireRateMs: 5000, baseDmg: 5,  baseHp: 40,  aoe: 0,  effect: 'vulnerable_5m',           label: '마법탑',   icon: '✨', cost: 50 },
-  support:    { range: 30,  fireRateMs: 0,    baseDmg: 0,  baseHp: 60,  aoe: 0,  effect: 'buff_adjacent',           label: '지원탑',   icon: '🛡', cost: 40 },
-  production: { range: 0,   fireRateMs: 0,    baseDmg: 0,  baseHp: 60,  aoe: 0,  effect: 'parts_storage',           label: '생산탑',   icon: '⚙',  cost: 50 },
-  revenue:    { range: 0,   fireRateMs: 0,    baseDmg: 0,  baseHp: 80,  aoe: 0,  effect: 'ad_revenue',              label: '수익탑',   icon: '💰', cost: 100 }
+  generic:  { range: 80,  fireRateMs: 3000, baseDmg: 10, baseHp: 50,  effect: null,            label: '제네릭',   cost: 30,  desc: '시작용 균형' },
+  balista:  { range: 150, fireRateMs: 4000, baseDmg: 18, baseHp: 50,  effect: 'first_shot_50', label: '발리스타', cost: 50,  desc: '장거리 정찰형, 첫 발 +50%' },
+  cannon:   { range: 100, fireRateMs: 7000, baseDmg: 35, baseHp: 80,  effect: 'aoe_30',        label: '대포',    cost: 70,  desc: '광역 폭격 30m' },
+  assault:  { range: 70,  fireRateMs: 1000, baseDmg: 6,  baseHp: 60,  effect: null,            label: '돌격',    cost: 50,  desc: '연사 속도 우위' },
+  scifi:    { range: 130, fireRateMs: 5000, baseDmg: 35, baseHp: 50,  effect: 'pierce',        label: 'SF',      cost: 75,  desc: '정밀 관통 사격' },
+  fire:     { range: 60,  fireRateMs: 2000, baseDmg: 8,  baseHp: 50,  effect: 'burn_5s',       label: '화염',    cost: 55,  desc: '5초간 화상 도트' },
+  ice:      { range: 80,  fireRateMs: 3000, baseDmg: 6,  baseHp: 50,  effect: 'slow_30_10',    label: '얼음',    cost: 60,  desc: '적 -30% 10초' },
+  aqua:     { range: 90,  fireRateMs: 3000, baseDmg: 12, baseHp: 60,  effect: 'vulnerable_5m', label: '아쿠아',   cost: 60,  desc: '적 영역 5분 취약화' },
+  electric: { range: 75,  fireRateMs: 4000, baseDmg: 14, baseHp: 50,  effect: 'chain_2',       label: '전기',    cost: 65,  desc: '가까운 적 2명 추가' },
+  nature:   { range: 50,  fireRateMs: 0,    baseDmg: 0,  baseHp: 60,  effect: 'heal_adj',      label: '자연',    cost: 50,  desc: '인접 타워 회복' },
+  venom:    { range: 65,  fireRateMs: 3000, baseDmg: 5,  baseHp: 50,  effect: 'poison_30s',    label: '독',     cost: 55,  desc: '30초 누적 독 도트' },
+  arcane:   { range: 100, fireRateMs: 6000, baseDmg: 22, baseHp: 50,  effect: 'debuff_combine',label: '비전',    cost: 70,  desc: '영역 내 적 합성률 -10%' },
+  crystal:  { range: 40,  fireRateMs: 0,    baseDmg: 0,  baseHp: 80,  effect: 'synergy_boost', label: '크리스탈', cost: 80,  desc: '동맹 시너지 +10%' }
 }
 
-function towerStats(cls, tier = 1) {
-  const c = TOWER_CLASSES[cls] || TOWER_CLASSES.arrow
+// 레벨업 공식 (Lv1 → Lv5)
+//   스탯 ×(1 + (lv-1)×0.45),  HP ×(1 + (lv-1)×0.55),  사거리 ×(1 + (lv-1)×0.10),  비용 ×1.7^(lv-1)
+function towerStats(cls, level = 1) {
+  const c = TOWER_CLASSES[cls] || TOWER_CLASSES.generic
+  const lvl = Math.max(1, Math.min(5, level))
+  const dmgMult   = 1 + (lvl - 1) * 0.45
+  const hpMult    = 1 + (lvl - 1) * 0.55
+  const rangeMult = 1 + (lvl - 1) * 0.10
+  const rateMult  = Math.max(0.6, 1 - (lvl - 1) * 0.08)  // 발사속도도 약간 빨라짐
   return {
-    range: c.range,
-    fireRateMs: c.fireRateMs,
-    damage: c.baseDmg * tier,
-    hp: c.baseHp * tier,
-    aoe: c.aoe,
+    range: Math.round(c.range * rangeMult),
+    fireRateMs: c.fireRateMs > 0 ? Math.round(c.fireRateMs * rateMult) : 0,
+    damage: Math.round(c.baseDmg * dmgMult),
+    hp: Math.round(c.baseHp * hpMult),
     effect: c.effect,
     label: c.label,
-    icon: c.icon,
-    cost: Math.round(c.cost * Math.pow(1.5, tier - 1))  // 티어 비례 비용
+    desc: c.desc,
+    cost: Math.round(c.cost * Math.pow(1.7, lvl - 1)),
+    level: lvl
   }
 }
 
@@ -60,42 +84,70 @@ async function processTowerDamage(userId, lat, lng) {
 
   for (const tw of fg.rows) {
     if (friendlyIds.has(tw.user_id)) continue
-    const cls = tw.tower_class || 'arrow'
+    const cls = tw.tower_class || 'generic'
     const stats = towerStats(cls, tw.tier || 1)
-    if (stats.damage <= 0 || stats.range <= 0) continue  // 비전투 타워
+    if (stats.damage <= 0 || stats.range <= 0) continue  // 비전투 타워(nature/crystal)
 
     const d = distMeters(tw.terr_lat, tw.terr_lng, lat, lng)
     if (d > stats.range) continue
 
-    // 발사 쿨다운 체크
+    // 발사 쿨다운
     const lastFired = tw.last_fired_at ? new Date(tw.last_fired_at).getTime() : 0
     if (Date.now() - lastFired < stats.fireRateMs) continue
 
-    // 발사
+    // 효과별 데미지 보정
+    let appliedDmg = stats.damage
+    if (stats.effect === 'first_shot_50' && !lastFired) appliedDmg = Math.round(appliedDmg * 1.5)
+
+    // 발사 기록
     await db.query(`UPDATE fixed_guardians SET last_fired_at = NOW() WHERE id = $1`, [tw.id])
     await db.query(
       `INSERT INTO tower_strikes (tower_id, target_user_id, damage) VALUES ($1, $2, $3)`,
-      [tw.id, userId, stats.damage]
+      [tw.id, userId, appliedDmg]
     )
     // 데미지 적용
-    await db.query(
-      `UPDATE guardians SET hp = GREATEST(0, hp - $1) WHERE user_id = $2`,
-      [stats.damage, userId]
-    )
-    // 마법탑: vulnerable 효과
-    if (stats.effect === 'vulnerable_5m') {
-      await db.query(
-        `UPDATE territories SET vulnerable_until = GREATEST(COALESCE(vulnerable_until, NOW()), NOW() + INTERVAL '5 minutes') WHERE user_id = $1`,
-        [userId]
-      ).catch(() => {})
+    await db.query(`UPDATE guardians SET hp = GREATEST(0, hp - $1) WHERE user_id = $2`, [appliedDmg, userId])
+
+    // 효과 적용
+    switch (stats.effect) {
+      case 'aoe_30':
+        // 동일 위치 다른 적 플레이어들(30m 내) 추가 피해 — 간단화: 같은 영역 내 다른 사용자 검색 생략
+        break
+      case 'burn_5s':
+        // 5초간 추가 도트 — 간이 구현: 즉시 추가 5턴 데미지 누적
+        await db.query(`UPDATE guardians SET hp = GREATEST(0, hp - $1) WHERE user_id = $2`, [Math.round(appliedDmg * 0.5), userId])
+        break
+      case 'poison_30s':
+        // 누적 독: hp 추가 차감 (작지만 누적 가능)
+        await db.query(`UPDATE guardians SET hp = GREATEST(0, hp - $1) WHERE user_id = $2`, [Math.round(appliedDmg * 0.7), userId])
+        break
+      case 'slow_30_10':
+        // 적의 모든 영역 vulnerable + 시너지 페널티는 별도 컬럼 필요. 간이: vulnerable 적용
+        await db.query(`UPDATE territories SET vulnerable_until = GREATEST(COALESCE(vulnerable_until, NOW()), NOW() + INTERVAL '10 seconds') WHERE user_id = $1`, [userId]).catch(() => {})
+        break
+      case 'vulnerable_5m':
+        await db.query(`UPDATE territories SET vulnerable_until = GREATEST(COALESCE(vulnerable_until, NOW()), NOW() + INTERVAL '5 minutes') WHERE user_id = $1`, [userId]).catch(() => {})
+        break
+      case 'chain_2':
+        // 체인은 단순화: 50% 추가 데미지로 표현
+        await db.query(`UPDATE guardians SET hp = GREATEST(0, hp - $1) WHERE user_id = $2`, [Math.round(appliedDmg * 0.5), userId])
+        break
+      case 'pierce':
+        // 관통 = 방어력 무시 (이미 방어 미반영이라 30% 추가 데미지로 대체)
+        await db.query(`UPDATE guardians SET hp = GREATEST(0, hp - $1) WHERE user_id = $2`, [Math.round(appliedDmg * 0.3), userId])
+        break
+      case 'debuff_combine':
+        // 적 영역에 vulnerable 짧게 + 합성 페널티 (combine 단계에서 따로 체크 가능, 여기선 vulnerable로 대체)
+        await db.query(`UPDATE territories SET vulnerable_until = GREATEST(COALESCE(vulnerable_until, NOW()), NOW() + INTERVAL '1 minute') WHERE user_id = $1`, [userId]).catch(() => {})
+        break
     }
 
     strikes.push({
       towerId: tw.id, towerClass: cls, tier: tw.tier || 1,
-      ownerId: tw.user_id, damage: stats.damage,
-      distance: Math.round(d), label: stats.label, icon: stats.icon
+      ownerId: tw.user_id, damage: appliedDmg, effect: stats.effect,
+      distance: Math.round(d), label: stats.label
     })
-    totalDmg += stats.damage
+    totalDmg += appliedDmg
   }
 
   return { strikes, totalDmg }

@@ -125,7 +125,14 @@ async function computeEffectiveStats(userId, baseStats) {
     synergyCount = parseInt(syn.rows[0]?.link_cnt) || 0
   } catch {}
 
-  const synBonus = 1.0 + Math.min(0.30, synergyCount * 0.05)
+  let synBonus = 1.0 + Math.min(0.30, synergyCount * 0.05)
+
+  // Crystal 타워 보유 시 시너지 +10% (스택 가능, 최대 +30%)
+  try {
+    const cr = await db.query(`SELECT COUNT(*) AS cnt FROM fixed_guardians WHERE user_id=$1 AND tower_class='crystal'`, [userId])
+    const crCnt = Math.min(3, parseInt(cr.rows[0]?.cnt) || 0)
+    synBonus += crCnt * 0.10
+  } catch {}
 
   // 레벨 보너스 + 패널티 + 시너지 (atk/def/hp/abs/prd/spd/rng/ter)
   const numStats = ['atk', 'def', 'hp', 'abs', 'prd', 'spd', 'rng', 'ter']

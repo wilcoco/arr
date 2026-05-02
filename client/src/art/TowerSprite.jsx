@@ -1,10 +1,32 @@
-// 타워 스프라이트 — PNG 우선, 없으면 인라인 SVG 폴백
-// Tower Defense Mega Pack 등에서 추출한 PNG가 /public/assets/towers/{class}_t{tier}.png 에
-// 있으면 자동 사용, 없으면 SVG 디폴트.
+// 13종 타워 스프라이트 — PNG 우선, SVG 폴백
+// Piloto Studio TowerDefenseStarterPack 매핑
 
 import { useState } from 'react'
 
 const TIER_COLORS = ['', '#9CA3AF', '#34D399', '#A78BFA', '#F59E0B', '#EF4444']
+
+// 13종 별 색상 키
+const CLASS_TINT = {
+  generic:  '#7c8a9a',
+  balista:  '#a07050',
+  cannon:   '#5a4a40',
+  assault:  '#666',
+  scifi:    '#4488ff',
+  fire:     '#ff6600',
+  ice:      '#7cdfff',
+  aqua:     '#0088ff',
+  electric: '#ffd700',
+  nature:   '#22cc44',
+  venom:    '#88dd44',
+  arcane:   '#aa55ff',
+  crystal:  '#ff44dd'
+}
+
+const CLASS_GLYPH = {
+  generic: '⛯', balista: '🏹', cannon: '💣', assault: '⚙', scifi: '🛰',
+  fire: '🔥', ice: '❄', aqua: '💧', electric: '⚡', nature: '🌿',
+  venom: '☠', arcane: '✨', crystal: '💎'
+}
 
 export function TowerSpriteSvg({ towerClass = 'arrow', tier = 1, size = 56 }) {
   const color = TIER_COLORS[Math.min(5, Math.max(1, tier))] || '#9CA3AF'
@@ -102,18 +124,20 @@ export function TowerImage({ towerClass = 'arrow', tier = 1, size = 56 }) {
   )
 }
 
-// 맵 마커용 HTML string (Leaflet divIcon)
+// 맵 마커용 HTML (Leaflet divIcon) — 13종
 export function towerMarkerHtml(towerClass, tier, isOwn) {
   const pngUrl = `/assets/towers/${towerClass}_t${tier}.png`
   const glow = isOwn ? '#ffd700' : '#4488ff'
-  // PNG 시도, 로딩 실패하면 onerror로 SVG 대체
+  const tint = CLASS_TINT[towerClass] || '#888'
+  const glyph = CLASS_GLYPH[towerClass] || '⛯'
   return `
     <div style="text-align:center;filter:drop-shadow(0 0 6px ${glow});">
       <img src="${pngUrl}" width="40" height="40"
            onerror="this.style.display='none';this.nextElementSibling.style.display='block';"
            style="display:block;object-fit:contain;"/>
-      <div style="display:none;font-size:24px;">${towerClass === 'cannon' ? '💣' : towerClass === 'magic' ? '✨' : towerClass === 'support' ? '🛡' : towerClass === 'production' ? '⚙' : towerClass === 'revenue' ? '💰' : '🏹'}</div>
+      <div style="display:none;width:40px;height:40px;background:${tint};border-radius:50%;color:white;font-size:22px;line-height:40px;border:2px solid ${glow};">${glyph}</div>
     </div>`
 }
 
+export { CLASS_TINT, CLASS_GLYPH }
 export default TowerImage
