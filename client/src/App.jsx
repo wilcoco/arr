@@ -260,6 +260,16 @@ export default function App() {
   const [showRangeCircles, setShowRangeCircles] = useState(false) // 적 타워 사거리 표시 토글
   const [showHamburger, setShowHamburger] = useState(false)
   const [territoryLosses, setTerritoryLosses] = useState([])
+  const siegeStatus = useGameStore(s => s.siegeStatus)
+  const fetchSiegeStatus = useGameStore(s => s.fetchSiegeStatus)
+
+  // 공성 상태 60초마다
+  useEffect(() => {
+    if (!userId) return
+    fetchSiegeStatus()
+    const id = setInterval(fetchSiegeStatus, 60000)
+    return () => clearInterval(id)
+  }, [userId])
 
   // 진영 상태 60초마다 동기화 + 미션/보스/튜토리얼
   useEffect(() => {
@@ -575,6 +585,28 @@ export default function App() {
                   pathOptions={{ color: '#ff6644', weight: 1, fillColor: '#ff6644', fillOpacity: 0.06, dashArray: '4,3' }}
                 />
               ))}
+
+              {/* 공성 진행 영역 (자기 영역) — 주황 마커 + 카운트다운 */}
+              {(siegeStatus || []).map(s => {
+                const hr = Math.floor(s.secondsRemaining / 3600)
+                const min = Math.floor((s.secondsRemaining % 3600) / 60)
+                return (
+                  <div key={`siege-${s.territoryId}`}>
+                    <Circle
+                      center={[s.center.lat, s.center.lng]}
+                      radius={s.radius * 1.15}
+                      pathOptions={{ color: '#ff8800', weight: 3, fillColor: '#ff8800', fillOpacity: 0.18, dashArray: '12,4' }}
+                    />
+                    <Marker
+                      position={[s.center.lat, s.center.lng]}
+                      icon={L.divIcon({
+                        html: `<div style="background:rgba(255,136,0,0.95);color:black;padding:4px 8px;border-radius:6px;font-size:11px;font-weight:bold;border:2px solid #ff5500;box-shadow:0 0 14px #ff8800;white-space:nowrap;">⚒ 방어선 붕괴 ${hr}h ${min}m</div>`,
+                        iconSize: [120, 24], iconAnchor: [60, 12], className: 'siege-countdown'
+                      })}
+                    />
+                  </div>
+                )
+              })}
 
               {/* 잃은 영역 표시 (회색 X) */}
               {(territoryLosses || []).slice(0, 10).map(l => (

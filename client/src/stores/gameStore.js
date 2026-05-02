@@ -376,6 +376,18 @@ export const useGameStore = create((set, get) => ({
     } catch (e) { console.error('boss attack', e) }
   },
 
+  // 공성 상태
+  siegeStatus: [], // [{territoryId, center, secondsRemaining, towersAlive, attackerName}]
+  fetchSiegeStatus: async () => {
+    const { userId } = get()
+    if (!userId) return
+    try {
+      const r = await fetch(`${API_URL}/api/towers/siege-status/${userId}`)
+      const d = await r.json()
+      if (d.success) set({ siegeStatus: d.sieges || [] })
+    } catch {}
+  },
+
   // 타워 시스템
   towerClasses: null, // 클래스별 메타 (서버에서 1회 fetch)
   fetchTowerClasses: async () => {

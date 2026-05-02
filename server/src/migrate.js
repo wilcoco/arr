@@ -267,6 +267,11 @@ async function migrate() {
     await safeAddColumn('territories', 'atari_attacker_ids', 'JSONB DEFAULT \'[]\'')
     await safeAddColumn('territories', 'in_eye_zone',      'BOOLEAN DEFAULT false')
 
+    // 타워 공성 시스템
+    await safeAddColumn('territories', 'siege_breached_at',  'TIMESTAMP')   // 모든 타워 격파된 시점
+    await safeAddColumn('territories', 'siege_last_attacker', 'UUID')       // 최후 일격 사용자
+    await safeAddColumn('fixed_guardians', 'destroyed_at', 'TIMESTAMP')     // 격파 기록
+
     // 타워 디펜스 시스템 (고정 수호신 → 타워)
     await safeAddColumn('fixed_guardians', 'tower_class', "VARCHAR(20) DEFAULT 'arrow'")
     await safeAddColumn('fixed_guardians', 'tier',         'INT DEFAULT 1')

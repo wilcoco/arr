@@ -256,7 +256,194 @@ router.get('/strikes/:userId', async (req, res) => {
   } catch (e) { res.status(500).json({ strikes: [], error: e.message }) }
 })
 
+// ─── 타워 vs 타워 공성 (5분마다 호출) ─────────────────────────────
+// 적 타워가 내 타워 사거리에 있으면 자동 발사. 양방향.
+async function processTowerSiege() {
+  const allTowers = await db.query(
+    `SELECT fg.*, t.center_lat, t.center_lng FROM fixed_guardians fg
+     JOIN territories t ON fg.territory_id = t.id
+     WHERE fg.hp > 0`
+  )
+  const towers = allTowers.rows
+  const allies = await db.query(`SELECT user_id_1, user_id_2 FROM alliances WHERE active = true`)
+  const isAlly = (a, b) => a === b ||
+    allies.rows.some(r => (r.user_id_1 === a && r.user_id_2 === b) || (r.user_id_1 === b && r.user_id_2 === a))
+
+  // 길드 동맹도 우호 처리
+  const guildPairs = await db.query(
+    `SELECT u1.id AS a, u2.id AS b FROM users u1, users u2
+     WHERE u1.guild_id IS NOT NULL AND u1.guild_id = u2.guild_id AND u1.id != u2.id`
+  )
+  const sameGuild = (a, b) => guildPairs.rows.some(r => r.a === a && r.b === b)
+  const friendly = (a, b) => isAlly(a, b) || sameGuild(a, b)
+
+  let exchanges = 0, destroyed = 0
+  const destroyedIds = new Set()
+
+  for (let i = 0; i < towers.length; i++) {
+    for (let j = 0; j < towers.length; j++) {
+      if (i === j) continue
+      const a = towers[i]   // shooter
+      const b = towers[j]   // target
+      if (destroyedIds.has(a.id) || destroyedIds.has(b.id)) continue
+      if (friendly(a.user_id, b.user_id)) continue
+
+      const aStats = towerStats(a.tower_class || 'generic', a.tier || 1)
+      if (aStats.damage <= 0 || aStats.range <= 0) continue
+
+      const d = distMeters(a.center_lat, a.center_lng, b.center_lat, b.center_lng)
+      if (d > aStats.range) continue
+
+      // 시간 기반 데미지 (5분 간격으로 fireRate 만큼 발사 가능)
+      const lastFired = a.last_fired_at ? new Date(a.last_fired_at).getTime() : 0
+      if (Date.now() - lastFired < aStats.fireRateMs) continue
+
+      // 발사
+      const dmg = aStats.damage
+      await db.query(`UPDATE fixed_guardians SET last_fired_at = NOW() WHERE id = $1`, [a.id])
+      const newHp = await db.query(
+        `UPDATE fixed_guardians SET hp = GREATEST(0, hp - $1) WHERE id = $2 RETURNING hp, max_hp`,
+        [dmg, b.id]
+      )
+      exchanges++
+      a.last_fired_at = new Date().toISOString()
+      b.hp = newHp.rows[0].hp
+
+      if (b.hp === 0) {
+        destroyedIds.add(b.id)
+        destroyed++
+        await db.query(
+          `UPDATE fixed_guardians SET destroyed_at = NOW() WHERE id = $1`,
+          [b.id]
+        )
+        // 격파 활동 로그 + 푸시
+        try {
+          await db.query(
+            `INSERT INTO activity_events (user_id, event_type, data) VALUES ($1, 'tower_destroyed', $2)`,
+            [b.user_id, JSON.stringify({ towerId: b.id, byUserId: a.user_id, towerClass: b.tower_class, tier: b.tier })]
+          )
+          const def = await db.query('SELECT fcm_token FROM users WHERE id=$1', [b.user_id])
+          if (def.rows[0]?.fcm_token) {
+            const { sendPush } = require('../fcm')
+            await sendPush(def.rows[0].fcm_token, '🔥 타워 격파!',
+              `${b.tower_class} Lv${b.tier} 타워가 공성으로 파괴되었습니다`,
+              { type: 'TOWER_DESTROYED', towerId: b.id })
+          }
+        } catch {}
+
+        // 영역 모든 타워 격파됐는지 체크 → siege_breached_at 설정
+        const remaining = await db.query(
+          `SELECT COUNT(*) FROM fixed_guardians WHERE territory_id = $1 AND hp > 0`,
+          [b.territory_id]
+        )
+        if (parseInt(remaining.rows[0].count) === 0) {
+          await db.query(
+            `UPDATE territories SET siege_breached_at = NOW(), siege_last_attacker = $1
+             WHERE id = $2 AND siege_breached_at IS NULL`,
+            [a.user_id, b.territory_id]
+          )
+          // 영역 소유자에게 침공 경고
+          try {
+            const owner = await db.query(
+              `SELECT u.fcm_token FROM territories t JOIN users u ON t.user_id = u.id WHERE t.id = $1`,
+              [b.territory_id]
+            )
+            if (owner.rows[0]?.fcm_token) {
+              const { sendPush } = require('../fcm')
+              await sendPush(owner.rows[0].fcm_token, '⚠ 영역 방어선 붕괴!',
+                `모든 타워가 격파되었습니다. 6시간 내 재건하지 않으면 영역을 잃습니다`,
+                { type: 'SIEGE_BREACHED', territoryId: b.territory_id })
+            }
+          } catch {}
+        }
+      }
+    }
+  }
+  return { exchanges, destroyed }
+}
+
+// 만료된 siege 처리 (6시간 grace 후 자동 점령)
+async function processSiegeExpiry() {
+  const SIEGE_GRACE_MS = 6 * 60 * 60 * 1000
+  const expired = await db.query(
+    `SELECT * FROM territories
+     WHERE siege_breached_at IS NOT NULL
+       AND siege_breached_at < NOW() - INTERVAL '6 hours'`
+  )
+  let captures = 0
+  for (const t of expired.rows) {
+    const newOwner = t.siege_last_attacker
+    if (!newOwner) continue
+    // 그동안 타워가 다시 세워졌으면 grace 해제
+    const towers = await db.query(
+      `SELECT COUNT(*) FROM fixed_guardians WHERE territory_id = $1 AND hp > 0`,
+      [t.id]
+    )
+    if (parseInt(towers.rows[0].count) > 0) {
+      await db.query(`UPDATE territories SET siege_breached_at = NULL, siege_last_attacker = NULL WHERE id = $1`, [t.id])
+      continue
+    }
+    // 점령 실행
+    const oldOwner = t.user_id
+    await db.query(
+      `UPDATE territories SET user_id = $1, siege_breached_at = NULL, siege_last_attacker = NULL,
+                              vulnerable_until = NULL, atari_started_at = NULL
+       WHERE id = $2`,
+      [newOwner, t.id]
+    )
+    await db.query(`DELETE FROM fixed_guardians WHERE territory_id = $1`, [t.id])
+    // 영역 손실 기록
+    try {
+      await db.query(
+        `INSERT INTO territory_losses (former_owner_id, new_owner_id, center_lat, center_lng, radius, loss_type)
+         VALUES ($1, $2, $3, $4, $5, 'siege_capture')`,
+        [oldOwner, newOwner, t.center_lat, t.center_lng, t.radius]
+      )
+      // 공격자 XP +150 (호구 100보다 약간 더, 더 어려운 작업)
+      await require('../levels').gainXp(null, newOwner, 150, 'siege_capture').catch(() => {})
+      const owner = await db.query('SELECT fcm_token FROM users WHERE id = $1', [oldOwner])
+      if (owner.rows[0]?.fcm_token) {
+        const { sendPush } = require('../fcm')
+        await sendPush(owner.rows[0].fcm_token, '💀 영역 함락',
+          `공성으로 영역을 잃었습니다`, { type: 'TERRITORY_LOST_SIEGE', territoryId: t.id })
+      }
+    } catch {}
+    captures++
+  }
+  return { captures }
+}
+
+// 사용자에게 자기 영역의 공성 상태 조회
+router.get('/siege-status/:userId', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT t.id, t.center_lat, t.center_lng, t.radius, t.siege_breached_at,
+              EXTRACT(EPOCH FROM (t.siege_breached_at + INTERVAL '6 hours' - NOW())) AS seconds_remaining,
+              (SELECT COUNT(*) FROM fixed_guardians WHERE territory_id = t.id AND hp > 0) AS towers_alive,
+              u.username AS attacker_name
+       FROM territories t
+       LEFT JOIN users u ON t.siege_last_attacker = u.id
+       WHERE t.user_id = $1 AND t.siege_breached_at IS NOT NULL`,
+      [req.params.userId]
+    )
+    const fnum = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d }
+    res.json({
+      success: true,
+      sieges: r.rows.map(s => ({
+        territoryId: s.id,
+        center: { lat: fnum(s.center_lat), lng: fnum(s.center_lng) },
+        radius: fnum(s.radius),
+        secondsRemaining: Math.max(0, parseInt(s.seconds_remaining) || 0),
+        towersAlive: parseInt(s.towers_alive),
+        attackerName: s.attacker_name || '?'
+      }))
+    })
+  } catch (e) { res.status(500).json({ success: false, error: e.message }) }
+})
+
 module.exports = router
 module.exports.processTowerDamage = processTowerDamage
+module.exports.processTowerSiege = processTowerSiege
+module.exports.processSiegeExpiry = processSiegeExpiry
 module.exports.TOWER_CLASSES = TOWER_CLASSES
 module.exports.towerStats = towerStats

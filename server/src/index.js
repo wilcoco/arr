@@ -20,6 +20,7 @@ const missionsRoutes = require('./routes/missions');
 const bossesRoutes = require('./routes/bosses');
 const towersRoutes = require('./routes/towers');
 const guildsRoutes = require('./routes/guilds');
+const { processTowerSiege, processSiegeExpiry } = require('./routes/towers');
 const { spawnBosses, expireOldBosses } = require('./routes/bosses');
 
 const app = express();
@@ -339,6 +340,17 @@ setInterval(async () => {
 }, 6 * 60 * 60 * 1000)
 // 서버 시작 후 첫 스폰 시도
 setTimeout(() => spawnBosses().catch(() => {}), 30 * 1000)
+
+// 5분마다 타워 공성 sub-tick (타워 vs 타워 + siege 만료 체크)
+setInterval(async () => {
+  try {
+    const siege = await processTowerSiege()
+    const expiry = await processSiegeExpiry()
+    if (siege.exchanges > 0 || expiry.captures > 0) {
+      console.log(`[Siege] tower exchanges: ${siege.exchanges}, destroyed: ${siege.destroyed}, territory captures: ${expiry.captures}`)
+    }
+  } catch (e) { console.error('siege tick', e.message) }
+}, 5 * 60 * 1000)
 
 // 1분마다 pending 요청 만료 체크 (전투 60초, 동맹 5분 보장)
 setInterval(async () => {
