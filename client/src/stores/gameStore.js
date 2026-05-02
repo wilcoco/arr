@@ -313,6 +313,92 @@ export const useGameStore = create((set, get) => ({
     } catch (err) { console.error('Fetch formation error:', err) }
   },
 
+  // 일일 미션
+  missions: [],
+  fetchMissions: async () => {
+    const { userId } = get()
+    if (!userId) return
+    try {
+      const r = await fetch(`${API_URL}/api/missions/today/${userId}`)
+      const d = await r.json()
+      if (d.success) set({ missions: d.missions || [] })
+    } catch (e) { console.error('missions fetch', e) }
+  },
+  claimMission: async (missionId) => {
+    const { userId, showToast } = get()
+    try {
+      const r = await fetch(`${API_URL}/api/missions/claim`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, missionId })
+      })
+      const d = await r.json()
+      if (d.success) {
+        showToast(`🎁 보상: +${d.reward.xp} XP, +${d.reward.energy} 에너지`, 'success')
+        get().fetchMissions(); get().loadUserData()
+      } else showToast(d.error || '보상 수령 실패', 'error')
+      return d
+    } catch (e) { return { success: false, error: e.message } }
+  },
+
+  // 월드 보스
+  worldBosses: [],
+  fetchWorldBosses: async () => {
+    const { userLocation } = get()
+    if (!userLocation) return
+    try {
+      const r = await fetch(`${API_URL}/api/bosses/nearby?lat=${userLocation.latitude}&lng=${userLocation.longitude}`)
+      const d = await r.json()
+      set({ worldBosses: d.bosses || [] })
+    } catch (e) { console.error('bosses fetch', e) }
+  },
+  attackBoss: async (bossId) => {
+    const { userId, userLocation, showToast } = get()
+    if (!userId || !userLocation) return
+    try {
+      const r = await fetch(`${API_URL}/api/bosses/${bossId}/attack`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, lat: userLocation.latitude, lng: userLocation.longitude })
+      })
+      const d = await r.json()
+      if (d.success) {
+        showToast(`⚔ 보스에게 ${d.damage} 데미지! 남은 HP ${d.hpPct}%${d.killed ? ' — 처치!' : ''}`, 'success')
+        get().fetchWorldBosses()
+        if (d.killed) get().loadUserData()
+      } else showToast(d.error || '공격 실패', 'error')
+    } catch (e) { console.error('boss attack', e) }
+  },
+
+  // 튜토리얼
+  tutorialState: { step: 0, currentStep: null, completed: false },
+  fetchTutorialState: async () => {
+    const { userId } = get()
+    if (!userId) return
+    try {
+      const r = await fetch(`${API_URL}/api/tutorial/state/${userId}`)
+      const d = await r.json()
+      if (d.success) set({ tutorialState: d })
+    } catch (e) {}
+  },
+  advanceTutorial: async (expectedKey) => {
+    const { userId, showToast } = get()
+    try {
+      const r = await fetch(`${API_URL}/api/tutorial/advance`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, expectedKey })
+      })
+      const d = await r.json()
+      if (d.success && d.reward) {
+        const parts = []
+        if (d.reward.xp)     parts.push(`+${d.reward.xp} XP`)
+        if (d.reward.energy) parts.push(`+${d.reward.energy} 에너지`)
+        if (parts.length) showToast(`📚 튜토리얼: ${parts.join(', ')}`, 'success')
+      }
+      get().fetchTutorialState()
+      get().loadUserData()
+      return d
+    } catch (e) { return { success: false } }
+  },
+
   // ─── 고정 수호신 저장소 (생산 누적/수령) ─────────────────────
   fixedGuardianStorage: [], // [{id, territoryId, center, capacity, storedCount, isFull}]
   fetchStorageSummary: async () => {

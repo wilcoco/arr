@@ -216,6 +216,9 @@ export default function App() {
     toast,
     fixedGuardianStorage,
     formationData,
+    missions,
+    worldBosses,
+    tutorialState,
     setUserLocation,
     setVisitorId,
     setArMode,
@@ -225,16 +228,46 @@ export default function App() {
     initiateFixedGuardianAttack,
     collectFromGuardian,
     fetchStorageSummary,
-    fetchFormation
+    fetchFormation,
+    fetchMissions,
+    claimMission,
+    fetchWorldBosses,
+    attackBoss,
+    fetchTutorialState,
+    advanceTutorial
   } = useGameStore()
 
-  // 진영 상태 60초마다 동기화
+  const [showMissions, setShowMissions] = useState(false)
+  const [storageFullWarned, setStorageFullWarned] = useState(false)
+
+  // 진영 상태 60초마다 동기화 + 미션/보스/튜토리얼
   useEffect(() => {
     if (!visitorId) return
-    fetchFormation()
-    const id = setInterval(fetchFormation, 60000)
+    fetchFormation(); fetchMissions(); fetchTutorialState()
+    const id = setInterval(() => { fetchFormation(); fetchMissions() }, 60000)
     return () => clearInterval(id)
   }, [visitorId])
+
+  // 보스 위치 30초마다 (위치 의존)
+  useEffect(() => {
+    if (!userLocation) return
+    fetchWorldBosses()
+    const id = setInterval(fetchWorldBosses, 30000)
+    return () => clearInterval(id)
+  }, [userLocation])
+
+  // storage 가득 알림 (한 번만)
+  const { showToast } = useGameStore.getState()
+  const fixedGuardianStorage = useGameStore(s => s.fixedGuardianStorage)
+  useEffect(() => {
+    const fullCount = (fixedGuardianStorage || []).filter(g => g.isFull).length
+    if (fullCount > 0 && !storageFullWarned) {
+      showToast(`📦 저장소 ${fullCount}개 가득 — 생산 정지! 방문하여 수령하세요`, 'error')
+      setStorageFullWarned(true)
+    } else if (fullCount === 0 && storageFullWarned) {
+      setStorageFullWarned(false)
+    }
+  }, [fixedGuardianStorage])
 
   // 50m 이내 + 누적된 고정 수호신 (Collect 가능)
   const collectibleGuardians = (fixedGuardianStorage || []).filter(g => {
@@ -471,13 +504,41 @@ export default function App() {
                 )
               })}
 
-              {/* 호구(atari) 영역 — 빨간 펄스 원 */}
-              {(formationData.territories || []).filter(t => t.atari).map(t => (
-                <Circle
-                  key={`atari-${t.id}`}
-                  center={[t.center.lat, t.center.lng]}
-                  radius={t.radius * 1.2}
-                  pathOptions={{ color: '#ff0044', weight: 3, fillColor: '#ff0044', fillOpacity: 0.15, dashArray: '8,4' }}
+              {/* 호구(atari) 영역 — 빨간 펄스 원 + 카운트다운 마커 */}
+              {(formationData.territories || []).filter(t => t.atari).map(t => {
+                const remainHr = t.atariRemainMs ? Math.floor(t.atariRemainMs / 3600000) : 0
+                const remainMin = t.atariRemainMs ? Math.floor((t.atariRemainMs % 3600000) / 60000) : 0
+                return (
+                  <div key={`atari-wrap-${t.id}`}>
+                    <Circle
+                      center={[t.center.lat, t.center.lng]}
+                      radius={t.radius * 1.2}
+                      pathOptions={{ color: '#ff0044', weight: 3, fillColor: '#ff0044', fillOpacity: 0.15, dashArray: '8,4' }}
+                    />
+                    <Marker
+                      position={[t.center.lat, t.center.lng]}
+                      icon={L.divIcon({
+                        html: `<div style="background:rgba(255,0,68,0.95);color:white;padding:3px 7px;border-radius:6px;font-size:11px;font-weight:bold;border:2px solid #ff0044;box-shadow:0 0 10px #ff0044;white-space:nowrap;">⚠ ${remainHr}h ${remainMin}m</div>`,
+                        iconSize: [80, 22], iconAnchor: [40, 11], className: 'atari-countdown'
+                      })}
+                    />
+                  </div>
+                )
+              })}
+
+              {/* 월드 보스 마커 */}
+              {(worldBosses || []).map(b => (
+                <Marker
+                  key={`boss-${b.id}`}
+                  position={[b.center.lat, b.center.lng]}
+                  icon={L.divIcon({
+                    html: `<div style="text-align:center;">
+                      <div style="background:linear-gradient(135deg,#ff0044,#aa0033);width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:3px solid #ffd700;box-shadow:0 0 20px #ff0044;font-size:30px;">👹</div>
+                      <div style="background:#000;color:#ffd700;font-size:9px;padding:1px 5px;border-radius:3px;margin-top:-3px;font-weight:bold;">BOSS HP ${b.hpPct}%</div>
+                    </div>`,
+                    iconSize: [60, 70], iconAnchor: [30, 60], className: 'boss-marker'
+                  })}
+                  eventHandlers={{ click: () => attackBoss(b.id) }}
                 />
               ))}
 
@@ -708,6 +769,72 @@ export default function App() {
         🏆
       </button>
 
+      {/* 미션 버튼 (완료 가능한 게 있으면 펄스) */}
+      {guardian && (() => {
+        const claimable = (missions || []).filter(m => m.completed && !m.claimed).length
+        return (
+          <button onClick={() => setShowMissions(true)} style={{
+            ...styles.missionBtn,
+            animation: claimable > 0 ? 'pulse-mission 1.2s infinite' : 'none'
+          }}>
+            📋 {claimable > 0 ? `${claimable}` : ''}
+          </button>
+        )
+      })()}
+
+      {/* 미션 모달 */}
+      {showMissions && (
+        <div style={styles.missionOverlay} onClick={() => setShowMissions(false)}>
+          <div style={styles.missionPanel} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+              <span style={{ fontWeight: 'bold', fontSize: 16 }}>📋 일일 미션</span>
+              <button onClick={() => setShowMissions(false)} style={styles.closeMissionBtn}>✕</button>
+            </div>
+            {(missions || []).map(m => {
+              const pct = Math.min(100, Math.round((m.progress / m.target) * 100))
+              return (
+                <div key={m.id} style={styles.missionRow}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 'bold' }}>{m.label}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                      <div style={{ flex: 1, height: 6, background: '#222', borderRadius: 3 }}>
+                        <div style={{ width: `${pct}%`, height: '100%', background: m.completed ? '#00ff88' : '#ffd700', borderRadius: 3 }} />
+                      </div>
+                      <span style={{ fontSize: 10, color: '#aaa' }}>{m.progress}/{m.target}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: '#888', marginTop: 3 }}>+{m.rewardXp} XP, +{m.rewardEnergy} 에너지</div>
+                  </div>
+                  <button
+                    onClick={() => claimMission(m.id)}
+                    disabled={!m.completed || m.claimed}
+                    style={{
+                      ...styles.claimBtn,
+                      background: m.claimed ? '#222' : m.completed ? '#00ff88' : '#444',
+                      color: m.claimed ? '#666' : m.completed ? 'black' : '#888',
+                      cursor: m.completed && !m.claimed ? 'pointer' : 'not-allowed'
+                    }}
+                  >
+                    {m.claimed ? '수령함' : m.completed ? '수령' : '진행중'}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 튜토리얼 가이드 (미완료 단계만) */}
+      {guardian && tutorialState && !tutorialState.completed && tutorialState.currentStep && (
+        <div style={styles.tutorialBubble}>
+          <div style={{ fontSize: 11, color: '#aaa', marginBottom: 4 }}>📚 가이드 ({tutorialState.step + 1}/8)</div>
+          <div style={{ fontSize: 13, fontWeight: 'bold', marginBottom: 4 }}>{tutorialState.currentStep.title}</div>
+          <div style={{ fontSize: 11, color: '#ccc', marginBottom: 8 }}>{tutorialState.currentStep.body}</div>
+          <button onClick={() => advanceTutorial(tutorialState.currentStep.key)} style={styles.tutorialNextBtn}>
+            확인 →
+          </button>
+        </div>
+      )}
+
       {/* 인접 고정 수호신 Collect 버튼 (50m 이내 + 누적 있을 때만 표시) */}
       {collectibleGuardians.length > 0 && (
         <div style={styles.collectBar}>
@@ -752,6 +879,11 @@ export default function App() {
 
       {showParts && <PartsPanel onClose={() => setShowParts(false)} />}
       {showLeaderboard && <Leaderboard onClose={() => setShowLeaderboard(false)} />}
+
+      <style>{`
+        @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
+        @keyframes pulse-mission { 0%,100%{box-shadow:0 4px 15px rgba(255,200,0,0.5)} 50%{box-shadow:0 0 24px rgba(255,200,0,1)} }
+      `}</style>
     </div>
   )
 }
@@ -937,6 +1069,44 @@ const styles = {
     cursor: 'pointer',
     zIndex: 1500,
     boxShadow: '0 4px 15px rgba(0,0,0,0.4)'
+  },
+  missionBtn: {
+    position: 'absolute', bottom: 280, right: 20,
+    width: 50, height: 50, borderRadius: 25,
+    border: 'none', background: 'rgba(60,40,90,0.95)',
+    color: 'white', fontSize: 16, fontWeight: 'bold', cursor: 'pointer',
+    zIndex: 1500, boxShadow: '0 4px 15px rgba(160,80,200,0.5)'
+  },
+  missionOverlay: {
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+    display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 3000
+  },
+  missionPanel: {
+    width: '100%', maxWidth: 480, background: '#111', color: 'white',
+    padding: 16, borderRadius: '16px 16px 0 0', maxHeight: '70vh', overflowY: 'auto'
+  },
+  closeMissionBtn: {
+    background: 'transparent', border: 'none', color: 'white', fontSize: 18, cursor: 'pointer'
+  },
+  missionRow: {
+    display: 'flex', alignItems: 'center', gap: 10,
+    padding: '10px 12px', background: '#1a1a1a', borderRadius: 10, marginBottom: 8
+  },
+  claimBtn: {
+    border: 'none', borderRadius: 6, padding: '8px 14px',
+    fontSize: 12, fontWeight: 'bold'
+  },
+  tutorialBubble: {
+    position: 'absolute', top: 90, left: 12, right: 12,
+    maxWidth: 360, margin: '0 auto',
+    background: 'rgba(20,30,60,0.98)', color: 'white',
+    border: '2px solid #4488ff', borderRadius: 12,
+    padding: 12, zIndex: 1800,
+    boxShadow: '0 6px 24px rgba(40,80,200,0.5)'
+  },
+  tutorialNextBtn: {
+    background: '#4488ff', color: 'white', border: 'none',
+    borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 'bold', cursor: 'pointer'
   },
   collectBar: {
     position: 'absolute',

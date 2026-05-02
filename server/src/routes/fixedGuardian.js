@@ -115,6 +115,8 @@ router.post('/:id/collect', async (req, res) => {
       await client.query(`DELETE FROM fixed_guardian_storage WHERE fixed_guardian_id=$1`, [id])
     })
 
+    require('./missions').progressMission(userId, 'storage_collect', 1).catch(() => {})
+
     res.json({
       success: true,
       collected: { parts: collectedParts, energy: collectedEnergy, revenue: collectedRevenue }

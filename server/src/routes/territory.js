@@ -93,8 +93,13 @@ router.post('/expand', async (req, res) => {
     )
 
     const r0 = result.rows[0]
-    // XP: 영역 확장 시 +20
+    // XP +20, ult_charge +10, 미션 hook
     const lvResult = await require('../levels').gainXp(null, userId, 20, 'territory_expand').catch(() => null)
+    await db.query(
+      `UPDATE guardians SET ult_charge = LEAST(100, COALESCE(ult_charge,0) + 10) WHERE user_id = $1`,
+      [userId]
+    ).catch(() => {})
+    require('./missions').progressMission(userId, 'territory_expand', 1).catch(() => {})
 
     res.json({
       success: true,

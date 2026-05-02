@@ -15,6 +15,10 @@ const activityRoutes = require('./routes/activity');
 const fixedGuardianRoutes = require('./routes/fixedGuardian');
 const formationRoutes = require('./routes/formation');
 const { computeFormation, ATARI_DURATION_MS, ATARI_DAMAGE_PER_HOUR } = require('./routes/formation');
+const tutorialRoutes = require('./routes/tutorial');
+const missionsRoutes = require('./routes/missions');
+const bossesRoutes = require('./routes/bosses');
+const { spawnBosses, expireOldBosses } = require('./routes/bosses');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -103,6 +107,9 @@ async function runEconomyTick() {
         AND u.energy_currency > 0
         AND t.warning_at IS NOT NULL
     `)
+
+    // 6.5. 모든 수호신 ult_charge 자연 충전 +5/시간 (cap 100)
+    await db.query(`UPDATE guardians SET ult_charge = LEAST(100, COALESCE(ult_charge, 0) + 5)`)
 
     // 7. regenerate 패시브: 장착 중인 파츠에 regenerate 있는 수호신 HP 5% 회복
     await db.query(`
@@ -193,13 +200,26 @@ async function runEconomyTick() {
         if (isAtari) {
           const info = f.atariMap.get(t.id)
           if (!cur.atari_started_at) {
-            // 새로 atari 진입
+            // 새로 atari 진입 — 수비자에게 푸시 + 활동 로그
             await db.query(
               `UPDATE territories
                SET atari_started_at=NOW(), atari_attacker_ids=$2, atari_damage=$3
                WHERE id=$1`,
               [t.id, JSON.stringify(info.attackerUserIds), ATARI_DAMAGE_PER_HOUR]
             )
+            try {
+              const def = await db.query('SELECT fcm_token, username FROM users WHERE id=$1', [t.user_id])
+              const tk = def.rows[0]?.fcm_token
+              if (tk) {
+                await sendPush(tk, '⚠ 영역 포위!',
+                  `당신의 영역이 호구(atari) 상태입니다. 24시간 내 풀지 못하면 빼앗깁니다`,
+                  { type: 'ATARI_STARTED', territoryId: t.id })
+              }
+              await db.query(
+                `INSERT INTO activity_events (user_id, event_type, data) VALUES ($1, 'atari_started', $2)`,
+                [t.user_id, JSON.stringify({ territoryId: t.id, attackerCount: info.attackerUserIds.length })]
+              )
+            } catch {}
             atariStarted++
           } else {
             // 이미 atari — 데미지 누적
@@ -214,6 +234,7 @@ async function runEconomyTick() {
             if (elapsed >= ATARI_DURATION_MS) {
               const newOwner = info.attackerUserIds[0]  // 첫 공격자에게 이전
               if (newOwner) {
+                const oldOwner = t.user_id
                 await db.query(
                   `UPDATE territories
                    SET user_id=$2, atari_started_at=NULL, atari_damage=0, atari_attacker_ids='[]', vulnerable_until=NULL
@@ -221,8 +242,24 @@ async function runEconomyTick() {
                   [t.id, newOwner]
                 )
                 await db.query(`DELETE FROM fixed_guardians WHERE territory_id=$1`, [t.id])
-                // XP: 호구 점령 +100
+                // XP 분배: 첫 공격자 +100, 나머지 +30
                 await require('./levels').gainXp(null, newOwner, 100, 'atari_capture').catch(() => {})
+                for (let i = 1; i < info.attackerUserIds.length; i++) {
+                  await require('./levels').gainXp(null, info.attackerUserIds[i], 30, 'atari_assist').catch(() => {})
+                }
+                // 수비자에게 territory_lost 로그 + 푸시
+                try {
+                  await db.query(
+                    `INSERT INTO activity_events (user_id, event_type, data) VALUES ($1, 'territory_lost', $2)`,
+                    [oldOwner, JSON.stringify({ territoryId: t.id, takenBy: newOwner, attackers: info.attackerUserIds })]
+                  )
+                  const def = await db.query('SELECT fcm_token FROM users WHERE id=$1', [oldOwner])
+                  if (def.rows[0]?.fcm_token) {
+                    await sendPush(def.rows[0].fcm_token, '💀 영역 함락',
+                      `호구에 막혔습니다. 영역을 잃었습니다`,
+                      { type: 'TERRITORY_LOST', territoryId: t.id })
+                  }
+                } catch {}
                 atariCaptures++
               }
             }
@@ -272,6 +309,13 @@ setTimeout(() => {
   setInterval(runEconomyTick, 60 * 60 * 1000)
 }, 60 * 1000)
 
+// 6시간마다 월드 보스 스폰 + 만료 처리
+setInterval(async () => {
+  try { await spawnBosses(); await expireOldBosses() } catch (e) { console.error('boss tick', e.message) }
+}, 6 * 60 * 60 * 1000)
+// 서버 시작 후 첫 스폰 시도
+setTimeout(() => spawnBosses().catch(() => {}), 30 * 1000)
+
 // 1분마다 pending 요청 만료 체크 (전투 60초, 동맹 5분 보장)
 setInterval(async () => {
   try {
@@ -289,6 +333,9 @@ app.use('/api/parts', partsRoutes);
 app.use('/api/activity', activityRoutes);
 app.use('/api/fixed-guardian', fixedGuardianRoutes);
 app.use('/api/formation', formationRoutes);
+app.use('/api/tutorial', tutorialRoutes);
+app.use('/api/missions', missionsRoutes);
+app.use('/api/bosses',   bossesRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

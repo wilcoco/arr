@@ -62,6 +62,18 @@ async function logActivity(client, userId, eventType, data = {}) {
   } catch (e) { /* 로깅 실패는 무시 */ }
 }
 
+// 궁극기 충전 (전투 후, 영역 확장 시, 매 tick)
+// 100 cap
+async function gainUltCharge(client, userId, amount) {
+  if (!userId || amount <= 0) return
+  try {
+    await client.query(
+      `UPDATE guardians SET ult_charge = LEAST(100, COALESCE(ult_charge, 0) + $1) WHERE user_id = $2`,
+      [amount, userId]
+    )
+  } catch (e) { /* 무시 */ }
+}
+
 // 타입 상성: animal > aircraft > robot > animal
 // 공격자가 유리하면 ×1.15, 불리하면 ×0.87 (역수)
 function typeAdvantage(attackerType, defenderType) {
@@ -225,6 +237,10 @@ router.post('/attack', async (req, res) => {
         await client.query("UPDATE users SET battle_wins = COALESCE(battle_wins, 0) + 1, battle_wins_season = COALESCE(battle_wins_season, 0) + 1 WHERE id = $1", [attackerId])
         graduated = await checkGraduation(client, attackerId)
         await require('../levels').gainXp(client, attackerId, 50, 'battle_win').catch(() => {})
+        await gainUltCharge(client, attackerId, 25)
+        await gainUltCharge(client, defenderId, 15)  // 진 쪽도 분노 충전
+        require('./missions').progressMission(attackerId, 'battle_win', 1).catch(() => {})
+        require('./missions').progressMission(attackerId, 'attack_player', 1).catch(() => {})
         await logActivity(client, defenderId, 'attacked_by', { attackerId, territoryId, winner: 'attacker' })
       } else {
         await logActivity(client, defenderId, 'attacked_by', { attackerId, territoryId, winner: 'defender' })
@@ -910,6 +926,10 @@ router.post('/attack-fixed-guardian', async (req, res) => {
         await client.query("UPDATE users SET battle_wins=COALESCE(battle_wins,0)+1 WHERE id=$1", [attackerId])
         graduated = await checkGraduation(client, attackerId)
         await require('../levels').gainXp(client, attackerId, 50, 'battle_win').catch(() => {})
+        await gainUltCharge(client, attackerId, 25)
+        await gainUltCharge(client, defenderId, 15)  // 진 쪽도 분노 충전
+        require('./missions').progressMission(attackerId, 'battle_win', 1).catch(() => {})
+        require('./missions').progressMission(attackerId, 'attack_player', 1).catch(() => {})
       } else {
         await client.query(
           `UPDATE guardians SET hp=GREATEST(1,hp-$1) WHERE user_id=$2`,

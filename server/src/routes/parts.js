@@ -283,9 +283,10 @@ router.post('/combine', async (req, res) => {
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
         [userId, slot, newTier, gType, JSON.stringify(stat_bonuses), JSON.stringify(passives)]
       )
-      // XP: 합성 성공 시 newTier × 10
+      // XP: 합성 성공 시 newTier × 10 + 미션
       const { gainXp } = require('../levels')
       const lvResult = await gainXp(null, userId, newTier * 10, 'combine_success')
+      require('./missions').progressMission(userId, 'combine_success', 1).catch(() => {})
       return res.json({
         success: true, result: 'success', part: newPart.rows[0],
         successRate: Math.round(successRate * 100),

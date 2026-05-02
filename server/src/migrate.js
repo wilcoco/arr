@@ -168,6 +168,54 @@ async function migrate() {
     await safeAddColumn('battles', 'expires_at', 'TIMESTAMP')
     await safeAddColumn('alliance_requests', 'expires_at', 'TIMESTAMP')
 
+    // 튜토리얼 / 일일 미션 / PvE 보스
+    await safeAddColumn('users', 'tutorial_step', 'INT DEFAULT 0')
+    await safeQuery(`
+      CREATE TABLE IF NOT EXISTS daily_missions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        mission_key VARCHAR(40) NOT NULL,
+        progress INT NOT NULL DEFAULT 0,
+        target INT NOT NULL,
+        reward_xp INT NOT NULL DEFAULT 0,
+        reward_energy INT NOT NULL DEFAULT 0,
+        completed BOOLEAN DEFAULT false,
+        claimed BOOLEAN DEFAULT false,
+        date_key VARCHAR(10) NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `)
+    await safeQuery(`CREATE INDEX IF NOT EXISTS idx_daily_missions_user_date ON daily_missions(user_id, date_key)`)
+
+    await safeQuery(`
+      CREATE TABLE IF NOT EXISTS world_bosses (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        boss_type VARCHAR(40) NOT NULL,
+        center_lat FLOAT NOT NULL,
+        center_lng FLOAT NOT NULL,
+        max_hp INT NOT NULL,
+        hp INT NOT NULL,
+        atk INT NOT NULL DEFAULT 50,
+        def INT NOT NULL DEFAULT 30,
+        spawned_at TIMESTAMP DEFAULT NOW(),
+        expires_at TIMESTAMP NOT NULL,
+        dead_at TIMESTAMP,
+        rewards_distributed BOOLEAN DEFAULT false
+      )
+    `)
+    await safeQuery(`CREATE INDEX IF NOT EXISTS idx_world_bosses_active ON world_bosses(dead_at, expires_at)`)
+
+    await safeQuery(`
+      CREATE TABLE IF NOT EXISTS boss_damage (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        boss_id UUID REFERENCES world_bosses(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        total_damage INT NOT NULL DEFAULT 0,
+        last_hit_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(boss_id, user_id)
+      )
+    `)
+
     // 레벨/XP 시스템
     await safeAddColumn('users', 'level', 'INT DEFAULT 1')
     await safeAddColumn('users', 'xp',    'INT DEFAULT 0')

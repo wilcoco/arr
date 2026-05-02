@@ -129,18 +129,29 @@ router.get('/state', async (req, res) => {
     }
     const { territories, links, atariMap, synergyByUser, eyeSet } = await computeFormation()
 
+    // atari_started_at 가져와서 남은 시간 계산
+    const startedRows = await db.query(`SELECT id, atari_started_at FROM territories WHERE atari_started_at IS NOT NULL`)
+    const startedMap = new Map(startedRows.rows.map(r => [r.id, r.atari_started_at]))
+
     const fnum = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d }
     const payload = {
       success: true,
-      territories: territories.map(t => ({
-        id: t.id,
-        userId: t.user_id,
-        center: { lat: fnum(t.center_lat), lng: fnum(t.center_lng) },
-        radius: fnum(t.radius),
-        atari: atariMap.has(t.id),
-        atariAttackers: atariMap.get(t.id)?.attackerUserIds || [],
-        inEye: eyeSet.has(t.id)
-      })),
+      territories: territories.map(t => {
+        const started = startedMap.get(t.id)
+        const elapsedMs = started ? (Date.now() - new Date(started).getTime()) : 0
+        const remainMs = Math.max(0, ATARI_DURATION_MS - elapsedMs)
+        return {
+          id: t.id,
+          userId: t.user_id,
+          center: { lat: fnum(t.center_lat), lng: fnum(t.center_lng) },
+          radius: fnum(t.radius),
+          atari: atariMap.has(t.id),
+          atariAttackers: atariMap.get(t.id)?.attackerUserIds || [],
+          atariStartedAt: started ? new Date(started).toISOString() : '',
+          atariRemainMs: started ? remainMs : 0,
+          inEye: eyeSet.has(t.id)
+        }
+      }),
       links: links.map(l => ({ a: l.a, b: l.b, friendly: l.friendly })),
       synergyByUser: Object.fromEntries(synergyByUser),
       eyeIds: [...eyeSet],
