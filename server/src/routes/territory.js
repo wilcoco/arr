@@ -250,8 +250,11 @@ router.get('/my/:userId', async (req, res) => {
         id: fg.id || '',
         territoryId: fg.territory_id || '',
         position: { lat: fnum(fg.position_lat), lng: fnum(fg.position_lng) },
-        stats: { atk: num(fg.atk), def: num(fg.def), hp: num(fg.hp) },
-        type: fg.guardian_type || 'defense'
+        stats: { atk: num(fg.atk), def: num(fg.def), hp: num(fg.hp), maxHp: num(fg.max_hp, num(fg.hp)) },
+        type: fg.guardian_type || 'defense',
+        towerClass: fg.tower_class || 'generic',
+        tier: num(fg.tier, 1),
+        range: num(fg.tower_range, 80)
       }))
     })
   } catch (err) {
