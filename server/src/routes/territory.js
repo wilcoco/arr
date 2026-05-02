@@ -100,6 +100,7 @@ router.post('/expand', async (req, res) => {
       [userId]
     ).catch(() => {})
     require('./missions').progressMission(userId, 'territory_expand', 1).catch(() => {})
+    require('./tutorial').autoAdvance(userId, 'expand_first').catch(() => {})
 
     res.json({
       success: true,
@@ -343,6 +344,40 @@ router.get('/nearby-fixed-guardians', async (req, res) => {
     // 테이블 없거나 에러 시 빈 배열 반환
     res.json({ fixedGuardians: [] })
   }
+})
+
+// 미확인 영역 손실 알림
+router.get('/losses/:userId', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT tl.*, u.username AS taken_by_name FROM territory_losses tl
+       LEFT JOIN users u ON tl.new_owner_id = u.id
+       WHERE tl.former_owner_id = $1 ORDER BY tl.created_at DESC LIMIT 30`,
+      [req.params.userId]
+    )
+    const fnum = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d }
+    res.json({
+      success: true,
+      losses: r.rows.map(l => ({
+        id: l.id,
+        center: { lat: fnum(l.center_lat), lng: fnum(l.center_lng) },
+        radius: fnum(l.radius),
+        takenBy: l.taken_by_name || '?',
+        lossType: l.loss_type,
+        viewed: !!l.viewed,
+        createdAt: l.created_at ? new Date(l.created_at).toISOString() : ''
+      })),
+      unviewedCount: r.rows.filter(l => !l.viewed).length
+    })
+  } catch (e) { res.status(500).json({ success: false, error: e.message }) }
+})
+
+router.post('/losses/mark-viewed', async (req, res) => {
+  try {
+    const { userId } = req.body
+    await db.query('UPDATE territory_losses SET viewed=true WHERE former_owner_id=$1', [userId])
+    res.json({ success: true })
+  } catch (e) { res.status(500).json({ success: false, error: e.message }) }
 })
 
 module.exports = router

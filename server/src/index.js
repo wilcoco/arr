@@ -19,6 +19,7 @@ const tutorialRoutes = require('./routes/tutorial');
 const missionsRoutes = require('./routes/missions');
 const bossesRoutes = require('./routes/bosses');
 const towersRoutes = require('./routes/towers');
+const guildsRoutes = require('./routes/guilds');
 const { spawnBosses, expireOldBosses } = require('./routes/bosses');
 
 const app = express();
@@ -265,8 +266,13 @@ async function runEconomyTick() {
                 for (let i = 1; i < info.attackerUserIds.length; i++) {
                   await require('./levels').gainXp(null, info.attackerUserIds[i], 30, 'atari_assist').catch(() => {})
                 }
-                // 수비자에게 territory_lost 로그 + 푸시
+                // 수비자에게 territory_lost 로그 + 푸시 + 영구 영역 손실 기록
                 try {
+                  await db.query(
+                    `INSERT INTO territory_losses (former_owner_id, new_owner_id, center_lat, center_lng, radius, loss_type)
+                     VALUES ($1, $2, $3, $4, $5, 'atari_capture')`,
+                    [oldOwner, newOwner, t.center_lat, t.center_lng, t.radius]
+                  )
                   await db.query(
                     `INSERT INTO activity_events (user_id, event_type, data) VALUES ($1, 'territory_lost', $2)`,
                     [oldOwner, JSON.stringify({ territoryId: t.id, takenBy: newOwner, attackers: info.attackerUserIds })]
@@ -355,6 +361,7 @@ app.use('/api/tutorial', tutorialRoutes);
 app.use('/api/missions', missionsRoutes);
 app.use('/api/bosses',   bossesRoutes);
 app.use('/api/towers',   towersRoutes);
+app.use('/api/guilds',   guildsRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

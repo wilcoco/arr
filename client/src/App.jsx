@@ -11,6 +11,8 @@ import BattleModal from './components/BattleModal'
 import PWAInstall from './components/PWAInstall'
 import PartsPanel from './components/PartsPanel'
 import Leaderboard from './components/Leaderboard'
+import TowerPlacementModal from './components/TowerPlacementModal'
+import GuildPanel from './components/GuildPanel'
 import { sendToUnity, registerUnityReceiver, isInsideUnity } from './unityBridge'
 
 // 아이콘 충돌 감지 및 튕겨내기 (물리 기반)
@@ -253,6 +255,11 @@ export default function App() {
 
   const [showMissions, setShowMissions] = useState(false)
   const [storageFullWarned, setStorageFullWarned] = useState(false)
+  const [showTowerModal, setShowTowerModal] = useState(null) // territoryId or null
+  const [showGuild, setShowGuild] = useState(false)
+  const [showRangeCircles, setShowRangeCircles] = useState(false) // 적 타워 사거리 표시 토글
+  const [showHamburger, setShowHamburger] = useState(false)
+  const [territoryLosses, setTerritoryLosses] = useState([])
 
   // 진영 상태 60초마다 동기화 + 미션/보스/튜토리얼
   useEffect(() => {
@@ -269,6 +276,27 @@ export default function App() {
     const id = setInterval(fetchWorldBosses, 30000)
     return () => clearInterval(id)
   }, [userLocation])
+
+  // 영역 손실 알림 fetch
+  useEffect(() => {
+    if (!userId) return
+    const load = async () => {
+      try {
+        const r = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/territory/losses/${userId}`)
+        const d = await r.json()
+        if (d.success) {
+          if (d.unviewedCount > 0 && territoryLosses.length === 0) {
+            useGameStore.getState().showToast(
+              `💀 영역 ${d.unviewedCount}개 잃음 — 햄버거 메뉴에서 확인`, 'error')
+          }
+          setTerritoryLosses(d.losses || [])
+        }
+      } catch {}
+    }
+    load()
+    const id = setInterval(load, 120000)
+    return () => clearInterval(id)
+  }, [userId])
 
   // storage 가득 알림 (한 번만)
   useEffect(() => {
@@ -538,13 +566,25 @@ export default function App() {
                 )
               })}
 
-              {/* 적 타워 사거리 원 (위협 가시화) */}
-              {(nearbyFixedGuardians || []).filter(fg => (fg.range || 80) > 0 && fg.type === 'defense').map(fg => (
+              {/* 적 타워 사거리 원 (토글로 표시) */}
+              {showRangeCircles && (nearbyFixedGuardians || []).filter(fg => (fg.range || 80) > 0 && fg.type === 'defense').map(fg => (
                 <Circle
                   key={`tower-range-${fg.id}`}
                   center={[fg.position.lat, fg.position.lng]}
                   radius={fg.range || 80}
                   pathOptions={{ color: '#ff6644', weight: 1, fillColor: '#ff6644', fillOpacity: 0.06, dashArray: '4,3' }}
+                />
+              ))}
+
+              {/* 잃은 영역 표시 (회색 X) */}
+              {(territoryLosses || []).slice(0, 10).map(l => (
+                <Marker
+                  key={`loss-${l.id}`}
+                  position={[l.center.lat, l.center.lng]}
+                  icon={L.divIcon({
+                    html: `<div style="background:#444;color:#999;padding:4px 8px;border-radius:6px;font-size:10px;border:1px dashed #888;">💀 잃음 (${l.takenBy})</div>`,
+                    iconSize: [80, 22], iconAnchor: [40, 11], className: 'loss-marker'
+                  })}
                 />
               ))}
 
@@ -608,12 +648,13 @@ export default function App() {
           />
         )}
 
-        {/* 내 영역들 */}
+        {/* 내 영역들 — 클릭 시 타워 배치 모달 */}
         {territories.map(t => (
           <Circle
             key={t.id}
             center={[t.center.lat, t.center.lng]}
             radius={t.radius}
+            eventHandlers={{ click: () => setShowTowerModal(t.id) }}
             pathOptions={{
               color: '#00ff88',
               fillColor: '#00ff88',
@@ -901,6 +942,34 @@ export default function App() {
 
       {showParts && <PartsPanel onClose={() => setShowParts(false)} />}
       {showLeaderboard && <Leaderboard onClose={() => setShowLeaderboard(false)} />}
+      {showTowerModal && <TowerPlacementModal territoryId={showTowerModal} onClose={() => setShowTowerModal(null)} />}
+      {showGuild && <GuildPanel onClose={() => setShowGuild(false)} />}
+
+      {/* 햄버거 메뉴 (좁은 화면 통합) */}
+      <button onClick={() => setShowHamburger(!showHamburger)} style={styles.hamburgerBtn}>
+        ☰
+      </button>
+      {showHamburger && (
+        <div style={styles.hamburgerMenu} onClick={() => setShowHamburger(false)}>
+          <div style={styles.hamburgerCard} onClick={e => e.stopPropagation()}>
+            <button onClick={() => { setShowGuild(true); setShowHamburger(false) }} style={styles.hbItem}>🏰 길드</button>
+            <button onClick={() => { setShowRangeCircles(!showRangeCircles); setShowHamburger(false) }} style={styles.hbItem}>
+              {showRangeCircles ? '🔇' : '🎯'} 적 타워 사거리 {showRangeCircles ? 'OFF' : 'ON'}
+            </button>
+            <button onClick={async () => {
+              await fetch(`${import.meta.env.VITE_API_URL || ''}/api/territory/losses/mark-viewed`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId })
+              })
+              useGameStore.getState().showToast(`💀 잃은 영역 ${territoryLosses.length}개 (확인됨)`, 'info')
+              setShowHamburger(false)
+            }} style={styles.hbItem}>
+              💀 잃은 영역 ({territoryLosses.length})
+            </button>
+            <button onClick={() => setShowHamburger(false)} style={{ ...styles.hbItem, color: '#888' }}>닫기</button>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
@@ -1091,6 +1160,25 @@ const styles = {
     cursor: 'pointer',
     zIndex: 1500,
     boxShadow: '0 4px 15px rgba(0,0,0,0.4)'
+  },
+  hamburgerBtn: {
+    position: 'absolute', top: 14, right: 14,
+    width: 44, height: 44, borderRadius: 22,
+    border: 'none', background: 'rgba(20,20,30,0.95)',
+    color: 'white', fontSize: 22, cursor: 'pointer',
+    zIndex: 1700, boxShadow: '0 4px 12px rgba(0,0,0,0.4)'
+  },
+  hamburgerMenu: {
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2900,
+    display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', paddingTop: 70, paddingRight: 14
+  },
+  hamburgerCard: {
+    background: '#111', color: 'white', padding: 8, borderRadius: 12,
+    minWidth: 220, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', border: '1px solid #333'
+  },
+  hbItem: {
+    width: '100%', padding: '12px 14px', background: 'transparent', border: 'none',
+    color: 'white', textAlign: 'left', fontSize: 14, cursor: 'pointer', borderRadius: 6
   },
   missionBtn: {
     position: 'absolute', bottom: 280, right: 20,

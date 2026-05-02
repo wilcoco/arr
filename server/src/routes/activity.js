@@ -98,12 +98,16 @@ router.post('/ping', async (req, res) => {
     const { userId } = req.body
     if (!userId) return res.json({ success: false })
 
-    // 일일 첫 접속 체크 (last_seen_at이 24시간 이상 전이면 보너스)
+    // 일일 첫 접속 + 장기 미접속 보너스 곡선
     const u = await db.query('SELECT last_seen_at FROM users WHERE id=$1', [userId])
     const last = u.rows[0]?.last_seen_at
     let dailyBonus = null
     if (!last || (Date.now() - new Date(last).getTime()) > 24 * 60 * 60 * 1000) {
-      dailyBonus = await require('../levels').gainXp(null, userId, 25, 'daily_login').catch(() => null)
+      // 미접속 일수에 비례한 보너스 곡선 (cap 7일 = 200xp)
+      const daysGap = last ? Math.min(7, Math.floor((Date.now() - new Date(last).getTime()) / (24 * 3600 * 1000))) : 1
+      const xpAmount = 25 + (daysGap - 1) * 25  // 1일=25, 7일=175
+      dailyBonus = await require('../levels').gainXp(null, userId, xpAmount, 'daily_login').catch(() => null)
+      if (dailyBonus) dailyBonus.daysGap = daysGap
     }
 
     await db.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId])

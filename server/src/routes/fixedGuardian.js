@@ -116,6 +116,7 @@ router.post('/:id/collect', async (req, res) => {
     })
 
     require('./missions').progressMission(userId, 'storage_collect', 1).catch(() => {})
+    require('./tutorial').autoAdvance(userId, 'visit_storage').catch(() => {})
 
     res.json({
       success: true,

@@ -46,7 +46,7 @@ function towerStats(cls, level = 1) {
     effect: c.effect,
     label: c.label,
     desc: c.desc,
-    cost: Math.round(c.cost * Math.pow(1.7, lvl - 1)),
+    cost: Math.round(c.cost * Math.pow(1.4, lvl - 1)),  // 1.7→1.4 완화 (Lv5 = ~3.84배)
     level: lvl
   }
 }

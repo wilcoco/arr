@@ -202,6 +202,11 @@ router.get('/effective-stats/:userId', async (req, res) => {
 })
 
 // 파츠 장착 (같은 슬롯 기존 장착 자동 해제)
+// 장착 시 튜토리얼 hook
+async function maybeAdvanceEquip(userId) {
+  require('./tutorial').autoAdvance(userId, 'equip_part').catch(() => {})
+}
+
 router.post('/equip', async (req, res) => {
   try {
     const { userId, partId } = req.body
@@ -217,6 +222,7 @@ router.post('/equip', async (req, res) => {
       await client.query('UPDATE parts SET equipped = true WHERE id = $1', [partId])
     })
 
+    maybeAdvanceEquip(userId)
     res.json({ success: true })
   } catch (err) {
     res.status(500).json({ success: false, error: err.message })

@@ -70,5 +70,21 @@ router.post('/advance', async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, error: e.message }) }
 })
 
+// 행동 hook — 다른 라우트에서 사용자 행동 시 자동으로 튜토리얼 단계 advance
+async function autoAdvance(userId, actionKey) {
+  if (!userId || !actionKey) return
+  try {
+    const r = await db.query('SELECT tutorial_step FROM users WHERE id=$1', [userId])
+    const cur = parseInt(r.rows[0]?.tutorial_step) || 0
+    const next = STEPS[cur]
+    if (!next || next.key !== actionKey) return
+    await db.query('UPDATE users SET tutorial_step = $2 WHERE id = $1', [userId, cur + 1])
+    const reward = next.reward || {}
+    if (reward.xp)     await require('../levels').gainXp(null, userId, reward.xp, 'tutorial_auto').catch(() => {})
+    if (reward.energy) await db.query('UPDATE users SET energy_currency = energy_currency + $1 WHERE id=$2', [reward.energy, userId]).catch(() => {})
+  } catch {}
+}
+
 module.exports = router
 module.exports.STEPS = STEPS
+module.exports.autoAdvance = autoAdvance

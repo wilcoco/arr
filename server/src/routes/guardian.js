@@ -52,6 +52,9 @@ router.post('/create', async (req, res) => {
       [userId, type, JSON.stringify(parts || {}), stats.atk, stats.def, stats.hp, stats.abs, stats.prd, stats.spd, stats.rng, stats.ter]
     )
 
+    // 튜토리얼 자동 진행 (create_guardian)
+    require('./tutorial').autoAdvance(userId, 'create_guardian').catch(() => {})
+
     // 신규 유저는 24시간 방어막 자동 부여
     if (userResult.rows.length === 0) {
       await db.query(

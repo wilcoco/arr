@@ -241,6 +241,7 @@ router.post('/attack', async (req, res) => {
         await gainUltCharge(client, defenderId, 15)  // 진 쪽도 분노 충전
         require('./missions').progressMission(attackerId, 'battle_win', 1).catch(() => {})
         require('./missions').progressMission(attackerId, 'attack_player', 1).catch(() => {})
+        require('./tutorial').autoAdvance(attackerId, 'first_battle').catch(() => {})
         await logActivity(client, defenderId, 'attacked_by', { attackerId, territoryId, winner: 'attacker' })
       } else {
         await logActivity(client, defenderId, 'attacked_by', { attackerId, territoryId, winner: 'defender' })
@@ -930,6 +931,7 @@ router.post('/attack-fixed-guardian', async (req, res) => {
         await gainUltCharge(client, defenderId, 15)  // 진 쪽도 분노 충전
         require('./missions').progressMission(attackerId, 'battle_win', 1).catch(() => {})
         require('./missions').progressMission(attackerId, 'attack_player', 1).catch(() => {})
+        require('./tutorial').autoAdvance(attackerId, 'first_battle').catch(() => {})
       } else {
         await client.query(
           `UPDATE guardians SET hp=GREATEST(1,hp-$1) WHERE user_id=$2`,

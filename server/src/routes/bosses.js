@@ -28,12 +28,27 @@ async function spawnBosses() {
   const offsetLng = (Math.random() - 0.5) * 0.005
   const type = BOSS_TYPES[Math.floor(Math.random() * BOSS_TYPES.length)]
 
+  const lat = u.lat + offsetLat, lng = u.lng + offsetLng
   await db.query(
     `INSERT INTO world_bosses (boss_type, center_lat, center_lng, max_hp, hp, atk, def, expires_at)
      VALUES ($1, $2, $3, $4, $4, $5, $6, NOW() + INTERVAL '${type.ttlHours} hours')`,
-    [type.key, u.lat + offsetLat, u.lng + offsetLng, type.hp, type.atk, type.def]
+    [type.key, lat, lng, type.hp, type.atk, type.def]
   )
-  console.log(`[Bosses] spawned ${type.key} at ${u.lat + offsetLat}, ${u.lng + offsetLng}`)
+  // 1km 이내 사용자 푸시
+  try {
+    const { sendPush } = require('../fcm')
+    const nearby = await db.query(
+      `SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL AND last_seen_at > NOW() - INTERVAL '24 hours'
+        AND SQRT(POW((last_location_lat - $1) * 111000, 2) + POW((last_location_lng - $2) * 88700, 2)) < 1000`,
+      [lat, lng]
+    )
+    for (const u of nearby.rows) {
+      await sendPush(u.fcm_token, '👹 월드 보스 출현!',
+        `${type.key} (HP ${type.hp})이 근처에 나타났습니다 (${type.ttlHours}h)`,
+        { type: 'BOSS_SPAWNED', bossType: type.key })
+    }
+  } catch {}
+  console.log(`[Bosses] spawned ${type.key} at ${lat}, ${lng}`)
 }
 
 // 만료된 보스 정리 — 데미지 누적자에게 보상 분배

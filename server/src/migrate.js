@@ -168,6 +168,46 @@ async function migrate() {
     await safeAddColumn('battles', 'expires_at', 'TIMESTAMP')
     await safeAddColumn('alliance_requests', 'expires_at', 'TIMESTAMP')
 
+    // 길드 시스템
+    await safeQuery(`
+      CREATE TABLE IF NOT EXISTS guilds (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(40) NOT NULL UNIQUE,
+        leader_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        member_count INT DEFAULT 1,
+        max_members INT DEFAULT 10,
+        shared_energy INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `)
+    await safeAddColumn('users', 'guild_id', 'UUID')
+    await safeQuery(`
+      CREATE TABLE IF NOT EXISTS guild_messages (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        guild_id UUID REFERENCES guilds(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        message TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `)
+    await safeQuery(`CREATE INDEX IF NOT EXISTS idx_guild_msg ON guild_messages(guild_id, created_at DESC)`)
+
+    // 영역 손실 기록 (영구 보존 — 활동 로그와 별도)
+    await safeQuery(`
+      CREATE TABLE IF NOT EXISTS territory_losses (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        former_owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        new_owner_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        center_lat FLOAT NOT NULL,
+        center_lng FLOAT NOT NULL,
+        radius FLOAT,
+        loss_type VARCHAR(20),
+        viewed BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `)
+    await safeQuery(`CREATE INDEX IF NOT EXISTS idx_terr_loss ON territory_losses(former_owner_id, viewed, created_at DESC)`)
+
     // 튜토리얼 / 일일 미션 / PvE 보스
     await safeAddColumn('users', 'tutorial_step', 'INT DEFAULT 0')
     await safeQuery(`
