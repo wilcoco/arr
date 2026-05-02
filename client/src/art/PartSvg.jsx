@@ -91,10 +91,10 @@ export function PartIcon({ slot, tier = 1, size = 48, glow = false }) {
   )
 }
 
+import { GuardianBase } from './GuardianSvg'
+
 // 캐릭터 + 파츠 합성 렌더 (장착 파츠를 캐릭터 위에 오버레이)
 export function CharacterWithParts({ type, equippedParts = [], size = 96, glow = false, animated = true }) {
-  const { GuardianBase } = require('./GuardianSvg')
-
   const slotPositions = {
     head: { x: 0.65, y: 0.05, scale: 0.30 },
     body: { x: 0.50, y: 0.45, scale: 0.32 },
