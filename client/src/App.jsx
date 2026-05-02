@@ -171,14 +171,24 @@ const fixedGuardianSvg = (isProduction) => `
     }
   </svg>`
 
-const createFixedGuardianIcon = (type, owner) => L.divIcon({
-  className: 'fixed-guardian-marker',
-  html: `<div style="text-align:center;">
-    <div style="filter:drop-shadow(0 0 6px ${type === 'production' ? '#ffd700' : '#4488ff'});">${fixedGuardianSvg(type === 'production')}</div>
-    <div style="font-size:9px;color:black;background:${type === 'production' ? '#ffd700' : '#4488ff'};padding:1px 4px;border-radius:3px;">${owner}</div>
-  </div>`,
-  iconSize: [40, 50], iconAnchor: [20, 42]
-})
+// 타워 마커 (PNG 우선, 실패 시 SVG 폴백) — Tower Defense Mega Pack 등 3D 에셋 사용 가능
+const createFixedGuardianIcon = (type, owner, towerClass = 'arrow', tier = 1) => {
+  // production은 type, 그 외는 tower_class 사용
+  const cls = type === 'production' ? 'production' : (towerClass || 'arrow')
+  const glow = type === 'production' ? '#ffd700' : '#4488ff'
+  const fallbackEmoji = cls === 'cannon' ? '💣' : cls === 'magic' ? '✨' : cls === 'support' ? '🛡' : cls === 'production' ? '⚙' : cls === 'revenue' ? '💰' : '🏹'
+  return L.divIcon({
+    className: 'fixed-guardian-marker',
+    html: `<div style="text-align:center;filter:drop-shadow(0 0 6px ${glow});">
+      <img src="/assets/towers/${cls}_t${tier}.png" width="40" height="40"
+           onerror="this.style.display='none';this.nextSibling.style.display='block';"
+           style="display:block;object-fit:contain;"/>
+      <div style="display:none;font-size:30px;line-height:40px;">${fallbackEmoji}</div>
+      <div style="font-size:9px;color:black;background:${glow};padding:1px 4px;border-radius:3px;">${owner}<sub>T${tier}</sub></div>
+    </div>`,
+    iconSize: [44, 56], iconAnchor: [22, 50]
+  })
+}
 
 // 맵 중심 이동 컴포넌트
 function MapController({ center }) {
@@ -646,7 +656,7 @@ export default function App() {
             <Marker
               key={`fixed-${fg.id}`}
               position={[fg.position.lat + offsetLat, fg.position.lng + offsetLng]}
-              icon={createFixedGuardianIcon(fg.type, fg.owner)}
+              icon={createFixedGuardianIcon(fg.type, fg.owner, fg.towerClass, fg.tier)}
               eventHandlers={{
                 click: () => guardian && handleFixedGuardianAttack(fg)
               }}
