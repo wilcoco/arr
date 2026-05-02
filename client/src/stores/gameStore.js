@@ -174,13 +174,21 @@ export const useGameStore = create((set, get) => ({
 
   // ─── 위치 업데이트 ────────────────────────────────────────────
   updateLocation: async (lat, lng) => {
-    const { visitorId } = get()
+    const { visitorId, showToast } = get()
     try {
-      await fetch(`${API_URL}/api/guardian/location`, {
+      const locRes = await fetch(`${API_URL}/api/guardian/location`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ visitorId, lat, lng })
       })
+      const locData = await locRes.json()
+      // 타워 공격받음 알림
+      if (locData?.towerStrikes?.length > 0) {
+        const total = locData.totalTowerDamage
+        const towerNames = locData.towerStrikes.map(s => `${s.icon}T${s.tier}`).join(' ')
+        showToast(`💥 타워 공격! -${total} HP (${towerNames})`, 'error')
+        get().loadUserData()
+      }
 
       const { userId } = get()
       if (userId) {
@@ -366,6 +374,46 @@ export const useGameStore = create((set, get) => ({
         if (d.killed) get().loadUserData()
       } else showToast(d.error || '공격 실패', 'error')
     } catch (e) { console.error('boss attack', e) }
+  },
+
+  // 타워 시스템
+  towerClasses: null, // 클래스별 메타 (서버에서 1회 fetch)
+  fetchTowerClasses: async () => {
+    try {
+      const r = await fetch(`${API_URL}/api/towers/classes`)
+      const d = await r.json()
+      set({ towerClasses: d.classes || null })
+    } catch (e) {}
+  },
+  placeTower: async (territoryId, towerClass, tier = 1) => {
+    const { userId, showToast } = get()
+    try {
+      const r = await fetch(`${API_URL}/api/towers/place`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, territoryId, towerClass, tier })
+      })
+      const d = await r.json()
+      if (d.success) {
+        showToast(`🏰 타워 배치 완료 (-${d.cost} 에너지)`, 'success')
+        get().loadUserData()
+      } else showToast(d.error || '배치 실패', 'error')
+      return d
+    } catch (e) { return { success: false } }
+  },
+  upgradeTower: async (towerId) => {
+    const { userId, showToast } = get()
+    try {
+      const r = await fetch(`${API_URL}/api/towers/upgrade`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, towerId })
+      })
+      const d = await r.json()
+      if (d.success) {
+        showToast(`⬆ T${d.newTier}로 업그레이드 (-${d.cost} 에너지)`, 'success')
+        get().loadUserData()
+      } else showToast(d.error || '업그레이드 실패', 'error')
+      return d
+    } catch (e) { return { success: false } }
   },
 
   // 튜토리얼

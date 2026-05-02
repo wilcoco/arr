@@ -524,6 +524,16 @@ export default function App() {
                 )
               })}
 
+              {/* 적 타워 사거리 원 (위협 가시화) */}
+              {(nearbyFixedGuardians || []).filter(fg => (fg.range || 80) > 0 && fg.type === 'defense').map(fg => (
+                <Circle
+                  key={`tower-range-${fg.id}`}
+                  center={[fg.position.lat, fg.position.lng]}
+                  radius={fg.range || 80}
+                  pathOptions={{ color: '#ff6644', weight: 1, fillColor: '#ff6644', fillOpacity: 0.06, dashArray: '4,3' }}
+                />
+              ))}
+
               {/* 월드 보스 마커 */}
               {(worldBosses || []).map(b => (
                 <Marker

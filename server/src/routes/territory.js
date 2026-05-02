@@ -331,7 +331,11 @@ router.get('/nearby-fixed-guardians', async (req, res) => {
         position: { lat: fnum(fg.position_lat), lng: fnum(fg.position_lng) },
         stats: { atk: num(fg.atk), def: num(fg.def), hp: num(fg.hp) },
         type: fg.guardian_type || 'defense',
-        territoryId: fg.territory_id || ''
+        territoryId: fg.territory_id || '',
+        towerClass: fg.tower_class || 'arrow',
+        tier: num(fg.tier, 1),
+        range: num(fg.tower_range, 80),
+        fireRateMs: num(fg.fire_rate_ms, 3000)
       }))
     })
   } catch (err) {

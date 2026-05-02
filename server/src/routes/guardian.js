@@ -187,18 +187,27 @@ router.get('/:visitorId', async (req, res) => {
   }
 })
 
-// 위치 업데이트
+// 위치 업데이트 — 타워 디펜스 데미지 발동
 router.post('/location', async (req, res) => {
   try {
     const { visitorId, lat, lng } = req.body
 
-    await db.query(
+    const u = await db.query(
       `UPDATE users SET last_location_lat = $1, last_location_lng = $2, is_online = true
-       WHERE username = $3`,
+       WHERE username = $3 RETURNING id`,
       [lat, lng, visitorId]
     )
+    const userId = u.rows[0]?.id
 
-    res.json({ success: true })
+    // 타워 자동 발사 처리
+    let towerResult = { strikes: [], totalDmg: 0 }
+    if (userId) {
+      try {
+        towerResult = await require('./towers').processTowerDamage(userId, parseFloat(lat), parseFloat(lng))
+      } catch (e) { console.error('tower damage', e.message) }
+    }
+
+    res.json({ success: true, towerStrikes: towerResult.strikes, totalTowerDamage: towerResult.totalDmg })
   } catch (err) {
     console.error('Location update error:', err)
     res.status(500).json({ success: false, error: err.message })

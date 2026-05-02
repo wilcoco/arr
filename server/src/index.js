@@ -18,6 +18,7 @@ const { computeFormation, ATARI_DURATION_MS, ATARI_DAMAGE_PER_HOUR } = require('
 const tutorialRoutes = require('./routes/tutorial');
 const missionsRoutes = require('./routes/missions');
 const bossesRoutes = require('./routes/bosses');
+const towersRoutes = require('./routes/towers');
 const { spawnBosses, expireOldBosses } = require('./routes/bosses');
 
 const app = express();
@@ -336,6 +337,7 @@ app.use('/api/formation', formationRoutes);
 app.use('/api/tutorial', tutorialRoutes);
 app.use('/api/missions', missionsRoutes);
 app.use('/api/bosses',   bossesRoutes);
+app.use('/api/towers',   towersRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

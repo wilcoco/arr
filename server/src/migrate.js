@@ -227,6 +227,25 @@ async function migrate() {
     await safeAddColumn('territories', 'atari_attacker_ids', 'JSONB DEFAULT \'[]\'')
     await safeAddColumn('territories', 'in_eye_zone',      'BOOLEAN DEFAULT false')
 
+    // 타워 디펜스 시스템 (고정 수호신 → 타워)
+    await safeAddColumn('fixed_guardians', 'tower_class', "VARCHAR(20) DEFAULT 'arrow'")
+    await safeAddColumn('fixed_guardians', 'tier',         'INT DEFAULT 1')
+    await safeAddColumn('fixed_guardians', 'tower_range',  'INT DEFAULT 80')
+    await safeAddColumn('fixed_guardians', 'fire_rate_ms', 'INT DEFAULT 3000')
+    await safeAddColumn('fixed_guardians', 'last_fired_at','TIMESTAMP')
+    await safeAddColumn('fixed_guardians', 'max_hp',       'INT DEFAULT 50')
+
+    await safeQuery(`
+      CREATE TABLE IF NOT EXISTS tower_strikes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tower_id UUID REFERENCES fixed_guardians(id) ON DELETE CASCADE,
+        target_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        damage INT NOT NULL,
+        fired_at TIMESTAMP DEFAULT NOW()
+      )
+    `)
+    await safeQuery(`CREATE INDEX IF NOT EXISTS idx_strikes_target ON tower_strikes(target_user_id, fired_at DESC)`)
+
     // 고정 수호신 저장소 (생산 누적 → 현장 수령 모델)
     await safeAddColumn('fixed_guardians', 'storage_capacity', 'INT DEFAULT 5')
     await safeAddColumn('fixed_guardians', 'last_produced_at', 'TIMESTAMP DEFAULT NOW()')
