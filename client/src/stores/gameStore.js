@@ -248,18 +248,20 @@ export const useGameStore = create((set, get) => ({
   },
 
   confirmTerritory: async (towerType = 'normal') => {
-    const { expandingTerritory, userId } = get()
+    const { expandingTerritory, userId, userLocation, showToast } = get()
     if (!expandingTerritory || !userId) return
     set({ loading: true })
+
+    // 항상 현재 userLocation 기준 — 텔레포트 후 옛 좌표로 가는 것 방지
+    const lat = userLocation?.latitude ?? expandingTerritory.center.latitude
+    const lng = userLocation?.longitude ?? expandingTerritory.center.longitude
 
     try {
       const res = await fetch(`${API_URL}/api/territory/expand`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId,
-          lat: expandingTerritory.center.latitude,
-          lng: expandingTerritory.center.longitude,
+          userId, lat, lng,
           radius: expandingTerritory.radius,
           towerType
         })
@@ -272,9 +274,11 @@ export const useGameStore = create((set, get) => ({
           expandingTerritory: null,
           loading: false
         }))
+        showToast(`✅ 영역 확장 완료 (${data.territory?.radius || ''}m)`, 'success')
         return data
       } else {
         set({ error: data.error, loading: false })
+        showToast(`❌ ${data.error || '확장 실패'}`, 'error')
       }
       return data
     } catch (err) {
@@ -431,6 +435,21 @@ export const useGameStore = create((set, get) => ({
       } else showToast(d.error || '배치 실패', 'error')
       return d
     } catch (e) { return { success: false } }
+  },
+
+  // 디버그 — 내 영역+타워 전부 삭제
+  resetMyTerritories: async () => {
+    const { userId, showToast } = get()
+    if (!userId) return
+    if (!confirm('⚠ 내 영역과 타워를 전부 삭제합니다 (테스트용). 계속?')) return
+    try {
+      const r = await fetch(`${API_URL}/api/territory/reset/${userId}`, { method: 'DELETE' })
+      const d = await r.json()
+      if (d.success) {
+        showToast(`🗑 영역 ${d.deletedTerritories}개 + 타워 ${d.deletedTowers}개 삭제`, 'success')
+        get().loadUserData()
+      } else showToast(d.error || '리셋 실패', 'error')
+    } catch (e) { showToast(e.message, 'error') }
   },
 
   // 슬롯 권리 (직접 침투 격파 후 5분 무료 건설)

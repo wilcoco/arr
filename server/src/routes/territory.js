@@ -67,6 +67,28 @@ router.get('/leaderboard', async (req, res) => {
   }
 })
 
+// 디버그 — 내 영역 전부 삭제 (테스트용)
+router.delete('/reset/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params
+    const fg = await db.query(
+      'DELETE FROM fixed_guardians WHERE user_id = $1 RETURNING id',
+      [userId]
+    )
+    const t = await db.query(
+      'DELETE FROM territories WHERE user_id = $1 RETURNING id',
+      [userId]
+    )
+    res.json({
+      success: true,
+      deletedTerritories: t.rows.length,
+      deletedTowers: fg.rows.length
+    })
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
 // 영역 확장
 router.post('/expand', async (req, res) => {
   try {

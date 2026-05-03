@@ -1192,6 +1192,10 @@ export default function App() {
             }} style={styles.hbItem}>
               💀 잃은 영역 ({territoryLosses.length})
             </button>
+            <button
+              onClick={() => { useGameStore.getState().resetMyTerritories(); setShowHamburger(false) }}
+              style={{ ...styles.hbItem, color: '#ff6644' }}
+            >🗑 디버그: 내 영역 전부 삭제</button>
             <button onClick={() => setShowHamburger(false)} style={{ ...styles.hbItem, color: '#888' }}>닫기</button>
           </div>
         </div>
