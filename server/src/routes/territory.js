@@ -89,6 +89,54 @@ router.delete('/reset/:userId', async (req, res) => {
   }
 })
 
+// 디버그 — 모든 사용자의 영역+타워 wipe (테스트 클러스터 정리용)
+//   주의: 운영에선 차단해야 함. 현재는 테스트 단계라 허용.
+router.delete('/reset-all/:secret', async (req, res) => {
+  try {
+    if (req.params.secret !== 'guardian-test') {
+      return res.status(403).json({ success: false, error: 'forbidden' })
+    }
+    const fg = await db.query('DELETE FROM fixed_guardians RETURNING id')
+    const t  = await db.query('DELETE FROM territories RETURNING id')
+    res.json({
+      success: true,
+      deletedTerritories: t.rows.length,
+      deletedTowers: fg.rows.length
+    })
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+// 디버그 — 주변 영역 전부 표시 (overlap 진단용, 1km 반경)
+router.get('/debug/nearby-all', async (req, res) => {
+  try {
+    const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.json({ territories: [] })
+    }
+    const r = await db.query(
+      `SELECT t.id, t.user_id, u.username, t.center_lat, t.center_lng, t.radius,
+              SQRT(POW((t.center_lat - $1) * 111000, 2) +
+                   POW((t.center_lng - $2) * 88700, 2)) AS dist
+       FROM territories t LEFT JOIN users u ON t.user_id = u.id
+       WHERE SQRT(POW((t.center_lat - $1) * 111000, 2) +
+                  POW((t.center_lng - $2) * 88700, 2)) < 1500
+       ORDER BY dist ASC LIMIT 30`,
+      [lat, lng]
+    )
+    const fnum = (v) => parseFloat(v) || 0
+    res.json({
+      success: true,
+      territories: r.rows.map(t => ({
+        id: t.id, owner: t.username || '?', ownerId: t.user_id,
+        center: { lat: fnum(t.center_lat), lng: fnum(t.center_lng) },
+        radius: fnum(t.radius), dist: Math.round(fnum(t.dist))
+      }))
+    })
+  } catch (e) { res.status(500).json({ success: false, error: e.message }) }
+})
+
 // 영역 확장
 router.post('/expand', async (req, res) => {
   try {

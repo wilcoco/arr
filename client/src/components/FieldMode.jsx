@@ -155,8 +155,9 @@ export default function FieldMode({ onClose }) {
 
       {/* HUD 상단 */}
       <div style={styles.hudTop}>
+        <button onClick={onClose} style={styles.backBtn}>← 맵으로</button>
         <div style={styles.hudBadge}>
-          <span>🎯 야전 모드</span>
+          <span>🎯 야전</span>
           <span style={{ marginLeft: 8, color: '#ff6644', fontWeight: 'bold' }}>ATK ×1.20</span>
         </div>
         <button onClick={onClose} style={styles.closeBtn}>✕ 종료</button>
@@ -301,8 +302,15 @@ const styles = {
     border: '1px solid #333', fontSize: 13
   },
   closeBtn: {
-    background: 'rgba(255,68,68,0.8)', color: 'white', border: 'none',
-    padding: '8px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer', fontWeight: 'bold'
+    background: '#ff4444', color: 'white', border: '2px solid white',
+    padding: '12px 20px', borderRadius: 24, fontSize: 16,
+    cursor: 'pointer', fontWeight: 'bold',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.5)'
+  },
+  backBtn: {
+    background: 'rgba(0,0,0,0.7)', color: 'white', border: '1px solid #888',
+    padding: '12px 18px', borderRadius: 24, fontSize: 15,
+    cursor: 'pointer', fontWeight: 'bold'
   },
   compassBox: {
     position: 'relative', zIndex: 10, margin: '24px 16px 0',

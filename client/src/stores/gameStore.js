@@ -249,8 +249,11 @@ export const useGameStore = create((set, get) => ({
 
   confirmTerritory: async (towerType = 'normal') => {
     const { expandingTerritory, userId, userLocation, showToast } = get()
-    if (!expandingTerritory || !userId) return
+    if (!expandingTerritory) { showToast('확장 모드가 아닙니다', 'error'); return }
+    if (!userId) { showToast('로그인 정보 없음 — 새로고침 후 재시도', 'error'); return }
+    if (!userLocation) { showToast('위치 정보 없음 — GPS 권한 확인', 'error'); return }
     set({ loading: true })
+    showToast('🏗 확장 시도 중...', 'info')
 
     // 항상 현재 userLocation 기준 — 텔레포트 후 옛 좌표로 가는 것 방지
     const lat = userLocation?.latitude ?? expandingTerritory.center.latitude
@@ -449,6 +452,39 @@ export const useGameStore = create((set, get) => ({
         showToast(`🗑 영역 ${d.deletedTerritories}개 + 타워 ${d.deletedTowers}개 삭제`, 'success')
         get().loadUserData()
       } else showToast(d.error || '리셋 실패', 'error')
+    } catch (e) { showToast(e.message, 'error') }
+  },
+
+  // 디버그 — 모든 사용자 영역+타워 전부 wipe (테스트 클러스터 정리)
+  resetAllTerritories: async () => {
+    const { showToast } = get()
+    if (!confirm('⚠⚠ 전체 영역+타워를 모두 삭제합니다 (DB wipe). 계속?')) return
+    try {
+      const r = await fetch(`${API_URL}/api/territory/reset-all/guardian-test`, { method: 'DELETE' })
+      const d = await r.json()
+      if (d.success) {
+        showToast(`🗑🗑 전체 영역 ${d.deletedTerritories}개 + 타워 ${d.deletedTowers}개 삭제`, 'success')
+        get().loadUserData()
+      } else showToast(d.error || '전체 리셋 실패', 'error')
+    } catch (e) { showToast(e.message, 'error') }
+  },
+
+  // 디버그 — 주변 영역 모두 조회 (overlap 진단)
+  debugNearbyTerritories: async () => {
+    const { userLocation, showToast } = get()
+    if (!userLocation) return
+    try {
+      const r = await fetch(`${API_URL}/api/territory/debug/nearby-all?lat=${userLocation.latitude}&lng=${userLocation.longitude}`)
+      const d = await r.json()
+      if (d.success) {
+        const list = d.territories.slice(0, 10).map(t =>
+          `${t.owner}: ${t.dist}m (r=${Math.round(t.radius)}m)`
+        ).join('\n')
+        const msg = d.territories.length === 0
+          ? '✅ 1.5km 내 영역 없음 — 자유롭게 확장 가능'
+          : `⚠ 주변 ${d.territories.length}개:\n${list}`
+        alert(msg)
+      }
     } catch (e) { showToast(e.message, 'error') }
   },
 

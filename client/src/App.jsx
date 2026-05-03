@@ -1193,9 +1193,17 @@ export default function App() {
               💀 잃은 영역 ({territoryLosses.length})
             </button>
             <button
+              onClick={() => { useGameStore.getState().debugNearbyTerritories(); setShowHamburger(false) }}
+              style={{ ...styles.hbItem, color: '#ffcc44' }}
+            >🔍 디버그: 주변 영역 진단 (1.5km)</button>
+            <button
               onClick={() => { useGameStore.getState().resetMyTerritories(); setShowHamburger(false) }}
               style={{ ...styles.hbItem, color: '#ff6644' }}
             >🗑 디버그: 내 영역 전부 삭제</button>
+            <button
+              onClick={() => { useGameStore.getState().resetAllTerritories(); setShowHamburger(false) }}
+              style={{ ...styles.hbItem, color: '#ff0044', fontWeight: 'bold' }}
+            >☢ 디버그: 전체 사용자 영역 wipe</button>
             <button onClick={() => setShowHamburger(false)} style={{ ...styles.hbItem, color: '#888' }}>닫기</button>
           </div>
         </div>
