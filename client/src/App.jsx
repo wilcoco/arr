@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { MapContainer, TileLayer, Marker, Circle, Polyline, Polygon, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
@@ -281,6 +281,8 @@ export default function App() {
   const [activeGrant, setActiveGrant] = useState(null) // 발판 건설용 grant
   const [showFieldMode, setShowFieldMode] = useState(false) // 웹 AR(야전) 모드
   const [teleportMode, setTeleportMode] = useState(false) // 디버그: 맵 클릭 = 위치 텔레포트
+  const [gpsLocked, setGpsLocked] = useState(false) // 텔레포트 후 GPS가 덮어쓰는 것 방지
+  const gpsLockedRef = useRef(false) // watchPosition 콜백에서 최신값 읽기 위한 ref
   const slotGrants = useGameStore(s => s.slotGrants)
   const fetchSlotGrants = useGameStore(s => s.fetchSlotGrants)
   // 슬롯 권리 폴링 (30초마다, 결과로 토스트 보내지는 즉시 fetch)
@@ -499,13 +501,25 @@ export default function App() {
     }
   }
 
-  // 디버그 텔레포트 — 사용자 위치를 임의 좌표로 이동
+  // 디버그 텔레포트 — 사용자 위치를 임의 좌표로 이동 + GPS 잠금
   const teleportTo = (lat, lng) => {
     setUserLocation({ latitude: lat, longitude: lng })
     setMapCenter([lat, lng])
     updateLocation(lat, lng)
     sendToUnity('LOCATION_UPDATE', { lat, lng })
-    useGameStore.getState().showToast(`🚩 텔레포트 — ${lat.toFixed(5)}, ${lng.toFixed(5)}`, 'info')
+    // GPS가 덮어쓰지 않도록 잠금 (해제는 GPS 잠금 토글 버튼)
+    setGpsLocked(true)
+    gpsLockedRef.current = true
+    useGameStore.getState().showToast(
+      `🚩 텔레포트 — ${lat.toFixed(5)}, ${lng.toFixed(5)} · GPS 잠김`, 'info')
+  }
+
+  const toggleGpsLock = () => {
+    const next = !gpsLocked
+    setGpsLocked(next)
+    gpsLockedRef.current = next
+    useGameStore.getState().showToast(
+      next ? '🔒 GPS 잠금 — 실제 위치 무시' : '🔓 GPS 해제 — 실제 위치로 복귀', 'info')
   }
 
   // FieldMode → 타워 배치 / 발판 건설 핸들러
@@ -563,9 +577,10 @@ export default function App() {
         { enableHighAccuracy: true, timeout: 10000 }
       )
 
-      // 위치 변경 감시
+      // 위치 변경 감시 — gpsLocked 시 무시 (텔레포트 디버그용)
       navigator.geolocation.watchPosition(
         (pos) => {
+          if (gpsLockedRef.current) return
           const { longitude, latitude } = pos.coords
           setUserLocation({ longitude, latitude })
           updateLocation(latitude, longitude)
@@ -864,9 +879,24 @@ export default function App() {
             background: teleportMode ? '#ff4444' : '#444',
             color: teleportMode ? 'white' : '#aaa'
           }}
-          title="ON 상태에서 맵을 탭하면 그 위치로 이동 (테스트용)"
+          title="ON 상태에서 맵을 탭하면 그 위치로 이동 (테스트용). 이동 후 GPS 자동 잠김"
         >
           🚩 {teleportMode ? '점프: 맵을 탭' : '위치 점프'}
+        </button>
+      )}
+
+      {/* GPS 잠금 토글 — 실제 GPS 무시하고 텔레포트 위치 유지 */}
+      {userLocation && (
+        <button
+          onClick={toggleGpsLock}
+          style={{
+            ...styles.gpsLockBtn,
+            background: gpsLocked ? '#ffcc44' : '#444',
+            color: gpsLocked ? 'black' : '#aaa'
+          }}
+          title={gpsLocked ? 'GPS 잠금 중 — 실제 위치 무시. 탭하면 해제' : 'GPS 사용 중 — 탭하면 실제 위치 무시 (수동 잠금)'}
+        >
+          {gpsLocked ? '🔒 GPS 잠김' : '🔓 GPS'}
         </button>
       )}
 
@@ -1252,6 +1282,19 @@ const styles = {
     background: '#fff', color: '#cc2200', border: 'none',
     padding: '8px 12px', borderRadius: 8, fontWeight: 'bold',
     fontSize: 12, cursor: 'pointer'
+  },
+  gpsLockBtn: {
+    position: 'absolute',
+    bottom: 150,
+    left: 20,
+    padding: '8px 12px',
+    borderRadius: 50,
+    border: '2px solid #cc8800',
+    fontSize: 12,
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    zIndex: 1500,
+    boxShadow: '0 4px 14px rgba(204,136,0,0.4)'
   },
   teleportBtn: {
     position: 'absolute',
