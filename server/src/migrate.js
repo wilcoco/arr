@@ -305,6 +305,21 @@ async function migrate() {
     `)
     await safeQuery(`CREATE INDEX IF NOT EXISTS idx_fg_storage ON fixed_guardian_storage(fixed_guardian_id)`)
 
+    // 직접 침투(경로 A) — 타워 격파 후 5분간 그 자리에 무료 타워 1개 건설 권리
+    await safeQuery(`
+      CREATE TABLE IF NOT EXISTS slot_grants (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        territory_id UUID REFERENCES territories(id) ON DELETE CASCADE,
+        position_lat FLOAT NOT NULL,
+        position_lng FLOAT NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `)
+    await safeQuery(`CREATE INDEX IF NOT EXISTS idx_slot_grants_user ON slot_grants(user_id, expires_at) WHERE used_at IS NULL`)
+
     // 활동 이벤트 (오프라인 요약, 로그)
     await safeQuery(`
       CREATE TABLE IF NOT EXISTS activity_events (

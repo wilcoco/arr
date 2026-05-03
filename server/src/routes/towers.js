@@ -162,10 +162,12 @@ router.get('/classes', (req, res) => {
   res.json({ classes: out })
 })
 
-// POST /api/towers/place — 새 타워 배치 (territory 소유자만, 영역당 최대 3개)
+// POST /api/towers/place — 새 타워 배치
+//   일반: territory 소유자만, 비용 차감, 영역당 최대 3개
+//   grantId: 직접 침투(경로 A) 격파 후 5분 내 무료 건설. 적 영역에 발판(foothold) 설치.
 router.post('/place', async (req, res) => {
   try {
-    const { userId, territoryId, towerClass, tier } = req.body
+    const { userId, territoryId, towerClass, tier, grantId } = req.body
     if (!userId || !territoryId || !towerClass) {
       return res.json({ success: false, error: '필수 파라미터 누락' })
     }
@@ -174,9 +176,33 @@ router.post('/place', async (req, res) => {
 
     const t = await db.query('SELECT * FROM territories WHERE id=$1', [territoryId])
     if (t.rows.length === 0) return res.json({ success: false, error: '영역 없음' })
-    if (t.rows[0].user_id !== userId) return res.json({ success: false, error: '소유자 아님' })
 
-    // 영역당 타워 최대 3개
+    let placeLat = parseFloat(t.rows[0].center_lat)
+    let placeLng = parseFloat(t.rows[0].center_lng)
+    let isFoothold = false
+    let grantRow = null
+
+    if (grantId) {
+      // 발판(foothold) 모드 — 그랜트 검증
+      const g = await db.query(
+        `SELECT * FROM slot_grants
+         WHERE id=$1 AND user_id=$2 AND territory_id=$3
+           AND used_at IS NULL AND expires_at > NOW()`,
+        [grantId, userId, territoryId]
+      )
+      if (g.rows.length === 0) {
+        return res.json({ success: false, error: '유효한 슬롯 권리가 없습니다 (만료/사용됨)' })
+      }
+      grantRow = g.rows[0]
+      placeLat = parseFloat(grantRow.position_lat)
+      placeLng = parseFloat(grantRow.position_lng)
+      isFoothold = true
+    } else {
+      // 일반 모드 — 영역 소유자만
+      if (t.rows[0].user_id !== userId) return res.json({ success: false, error: '소유자 아님' })
+    }
+
+    // 영역당 타워 최대 3개 (foothold도 제한 공유)
     const cnt = await db.query('SELECT COUNT(*) FROM fixed_guardians WHERE territory_id=$1', [territoryId])
     if (parseInt(cnt.rows[0].count) >= 3) {
       return res.json({ success: false, error: '영역당 최대 3개 타워' })
@@ -185,13 +211,15 @@ router.post('/place', async (req, res) => {
     const tierNum = parseInt(tier) || 1
     const stats = towerStats(towerClass, tierNum)
 
-    // 에너지 차감
-    const u = await db.query('SELECT energy_currency FROM users WHERE id=$1', [userId])
-    const energy = parseInt(u.rows[0]?.energy_currency) || 0
-    if (energy < stats.cost) {
-      return res.json({ success: false, error: `에너지 부족 (필요: ${stats.cost}, 보유: ${energy})` })
+    // 비용 — foothold는 무료, 일반은 차감
+    if (!isFoothold) {
+      const u = await db.query('SELECT energy_currency FROM users WHERE id=$1', [userId])
+      const energy = parseInt(u.rows[0]?.energy_currency) || 0
+      if (energy < stats.cost) {
+        return res.json({ success: false, error: `에너지 부족 (필요: ${stats.cost}, 보유: ${energy})` })
+      }
+      await db.query('UPDATE users SET energy_currency = energy_currency - $1 WHERE id=$2', [stats.cost, userId])
     }
-    await db.query('UPDATE users SET energy_currency = energy_currency - $1 WHERE id=$2', [stats.cost, userId])
 
     // 타워 삽입
     const result = await db.query(
@@ -202,16 +230,55 @@ router.post('/place', async (req, res) => {
       [userId, territoryId, towerClass === 'production' ? 'production' : 'defense',
        towerClass, tierNum, stats.range, stats.fireRateMs,
        stats.damage, Math.round(stats.damage * 0.5), stats.hp,
-       parseFloat(t.rows[0].center_lat), parseFloat(t.rows[0].center_lng)]
+       placeLat, placeLng]
     )
+
+    if (isFoothold) {
+      await db.query(`UPDATE slot_grants SET used_at = NOW() WHERE id = $1`, [grantId])
+    }
 
     require('./missions').progressMission(userId, 'place_fixed', 1).catch(() => {})
 
-    res.json({ success: true, tower: result.rows[0], cost: stats.cost })
+    res.json({
+      success: true,
+      tower: result.rows[0],
+      cost: isFoothold ? 0 : stats.cost,
+      foothold: isFoothold
+    })
   } catch (e) {
     console.error('tower place error', e)
     res.status(500).json({ success: false, error: e.message })
   }
+})
+
+// 활성 슬롯 권리 조회 (5분 내 무료 건설 가능)
+router.get('/grants/:userId', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT g.*, t.center_lat AS terr_lat, t.center_lng AS terr_lng, t.radius,
+              u.username AS owner_name
+       FROM slot_grants g
+       JOIN territories t ON g.territory_id = t.id
+       LEFT JOIN users u ON t.user_id = u.id
+       WHERE g.user_id = $1 AND g.used_at IS NULL AND g.expires_at > NOW()
+       ORDER BY g.expires_at ASC`,
+      [req.params.userId]
+    )
+    const fnum = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d }
+    res.json({
+      success: true,
+      grants: r.rows.map(g => ({
+        id: g.id,
+        territoryId: g.territory_id,
+        position: { lat: fnum(g.position_lat), lng: fnum(g.position_lng) },
+        territoryCenter: { lat: fnum(g.terr_lat), lng: fnum(g.terr_lng) },
+        territoryRadius: fnum(g.radius),
+        ownerName: g.owner_name || '?',
+        expiresAt: g.expires_at,
+        secondsRemaining: Math.max(0, Math.floor((new Date(g.expires_at).getTime() - Date.now()) / 1000))
+      }))
+    })
+  } catch (e) { res.status(500).json({ success: false, error: e.message }) }
 })
 
 // POST /api/towers/upgrade — 기존 타워 업그레이드
@@ -412,6 +479,77 @@ async function processSiegeExpiry() {
   }
   return { captures }
 }
+
+// 내가 공격 중인 적 영역들 — 전선(front-line) 공성 진행도
+//   1) 내가 마지막 공격자(siege_last_attacker)인 breach 진행 중 영역
+//   2) 내 타워 사거리에 들어와 있는 적 타워의 영역 (HP < maxHP인 것)
+router.get('/my-sieges/:userId', async (req, res) => {
+  try {
+    const userId = req.params.userId
+    // 내가 breach 직전까지 데미지 입혔거나 breach 한 영역
+    const breached = await db.query(
+      `SELECT t.id, t.center_lat, t.center_lng, t.radius, t.user_id AS owner_id, t.siege_breached_at,
+              EXTRACT(EPOCH FROM (t.siege_breached_at + INTERVAL '6 hours' - NOW())) AS seconds_remaining,
+              u.username AS owner_name,
+              (SELECT COUNT(*) FROM fixed_guardians WHERE territory_id = t.id AND hp > 0) AS towers_alive,
+              (SELECT COUNT(*) FROM fixed_guardians WHERE territory_id = t.id) AS towers_total
+       FROM territories t
+       LEFT JOIN users u ON t.user_id = u.id
+       WHERE t.siege_last_attacker = $1
+         AND t.siege_breached_at IS NOT NULL
+         AND t.user_id != $1`,
+      [userId]
+    )
+    // 내 타워 사거리 안에서 데미지 받은 적 타워들
+    const damaged = await db.query(
+      `SELECT DISTINCT t.id, t.center_lat, t.center_lng, t.radius, t.user_id AS owner_id,
+              u.username AS owner_name,
+              (SELECT COUNT(*) FROM fixed_guardians WHERE territory_id = t.id AND hp > 0) AS towers_alive,
+              (SELECT COUNT(*) FROM fixed_guardians WHERE territory_id = t.id) AS towers_total,
+              (SELECT MIN(hp::float / NULLIF(max_hp, 0)) FROM fixed_guardians
+                 WHERE territory_id = t.id AND hp < max_hp) AS min_tower_hp_pct
+       FROM territories t
+       LEFT JOIN users u ON t.user_id = u.id
+       JOIN fixed_guardians fg ON fg.territory_id = t.id
+       WHERE t.user_id != $1
+         AND fg.hp < fg.max_hp
+         AND EXISTS (
+           SELECT 1 FROM fixed_guardians my_fg
+           JOIN territories my_t ON my_fg.territory_id = my_t.id
+           WHERE my_fg.user_id = $1
+             AND SQRT(POW((my_t.center_lat - t.center_lat) * 111000, 2) +
+                      POW((my_t.center_lng - t.center_lng) * 88700, 2)) < my_fg.tower_range
+         )
+       LIMIT 20`,
+      [userId]
+    )
+    const fnum = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d }
+    const num = (v, d = 0) => { const n = parseInt(v); return Number.isFinite(n) ? n : d }
+    res.json({
+      success: true,
+      breached: breached.rows.map(s => ({
+        territoryId: s.id,
+        center: { lat: fnum(s.center_lat), lng: fnum(s.center_lng) },
+        radius: fnum(s.radius),
+        ownerName: s.owner_name || '?',
+        secondsRemaining: Math.max(0, parseInt(s.seconds_remaining) || 0),
+        towersAlive: num(s.towers_alive),
+        towersTotal: num(s.towers_total)
+      })),
+      damaging: damaged.rows.map(s => ({
+        territoryId: s.id,
+        center: { lat: fnum(s.center_lat), lng: fnum(s.center_lng) },
+        radius: fnum(s.radius),
+        ownerName: s.owner_name || '?',
+        towersAlive: num(s.towers_alive),
+        towersTotal: num(s.towers_total),
+        minTowerHpPct: Math.round(fnum(s.min_tower_hp_pct, 1.0) * 100)
+      }))
+    })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
 
 // 사용자에게 자기 영역의 공성 상태 조회
 router.get('/siege-status/:userId', async (req, res) => {

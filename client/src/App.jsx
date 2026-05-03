@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { MapContainer, TileLayer, Marker, Circle, Polyline, Polygon, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Circle, Polyline, Polygon, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
@@ -12,6 +12,7 @@ import PWAInstall from './components/PWAInstall'
 import PartsPanel from './components/PartsPanel'
 import Leaderboard from './components/Leaderboard'
 import TowerPlacementModal from './components/TowerPlacementModal'
+import FieldMode from './components/FieldMode'
 import GuildPanel from './components/GuildPanel'
 import { sendToUnity, registerUnityReceiver, isInsideUnity } from './unityBridge'
 
@@ -179,10 +180,19 @@ const TOWER_GLYPH = {
   fire: '🔥', ice: '❄', aqua: '💧', electric: '⚡', nature: '🌿',
   venom: '☠', arcane: '✨', crystal: '💎'
 }
-const createFixedGuardianIcon = (type, owner, towerClass = 'generic', tier = 1) => {
+const createFixedGuardianIcon = (type, owner, towerClass = 'generic', tier = 1, hp = null, maxHp = null) => {
   const cls = (towerClass && TOWER_GLYPH[towerClass]) ? towerClass : 'generic'
   const glow = type === 'production' ? '#ffd700' : '#ff6644'
   const glyph = TOWER_GLYPH[cls] || '⛯'
+  // HP 바 — 공격받았을 때만 표시
+  const hpPct = (hp != null && maxHp && maxHp > 0) ? Math.max(0, Math.min(100, (hp / maxHp) * 100)) : 100
+  const showHpBar = hpPct < 100
+  const hpColor = hpPct > 60 ? '#00ff88' : hpPct > 30 ? '#ffaa00' : '#ff4444'
+  const hpBarHtml = showHpBar
+    ? `<div style="width:36px;height:4px;background:#222;border-radius:2px;margin:1px auto 0;border:1px solid #000;">
+         <div style="width:${hpPct}%;height:100%;background:${hpColor};border-radius:2px;"></div>
+       </div>`
+    : ''
   return L.divIcon({
     className: 'fixed-guardian-marker',
     html: `<div style="text-align:center;filter:drop-shadow(0 0 6px ${glow});">
@@ -190,9 +200,10 @@ const createFixedGuardianIcon = (type, owner, towerClass = 'generic', tier = 1) 
            onerror="this.style.display='none';this.nextSibling.style.display='block';"
            style="display:block;object-fit:contain;"/>
       <div style="display:none;font-size:26px;line-height:40px;">${glyph}</div>
+      ${hpBarHtml}
       <div style="font-size:9px;color:black;background:${glow};padding:1px 4px;border-radius:3px;">${owner} L${tier}</div>
     </div>`,
-    iconSize: [44, 58], iconAnchor: [22, 52]
+    iconSize: [44, showHpBar ? 64 : 58], iconAnchor: [22, showHpBar ? 58 : 52]
   })
 }
 
@@ -204,6 +215,17 @@ function MapController({ center }) {
       map.setView([center.latitude, center.longitude], map.getZoom())
     }
   }, [center, map])
+  return null
+}
+
+// 디버그 — 맵 클릭하면 사용자 위치를 그 지점으로 텔레포트
+function TeleportClickHandler({ enabled, onTeleport }) {
+  useMapEvents({
+    click(e) {
+      if (!enabled) return
+      onTeleport(e.latlng.lat, e.latlng.lng)
+    }
+  })
   return null
 }
 
@@ -256,18 +278,33 @@ export default function App() {
   const [showMissions, setShowMissions] = useState(false)
   const [storageFullWarned, setStorageFullWarned] = useState(false)
   const [showTowerModal, setShowTowerModal] = useState(null) // territoryId or null
+  const [activeGrant, setActiveGrant] = useState(null) // 발판 건설용 grant
+  const [showFieldMode, setShowFieldMode] = useState(false) // 웹 AR(야전) 모드
+  const [teleportMode, setTeleportMode] = useState(false) // 디버그: 맵 클릭 = 위치 텔레포트
+  const slotGrants = useGameStore(s => s.slotGrants)
+  const fetchSlotGrants = useGameStore(s => s.fetchSlotGrants)
+  // 슬롯 권리 폴링 (30초마다, 결과로 토스트 보내지는 즉시 fetch)
+  useEffect(() => {
+    if (!userId) return
+    fetchSlotGrants()
+    const id = setInterval(fetchSlotGrants, 30000)
+    return () => clearInterval(id)
+  }, [userId])
   const [showGuild, setShowGuild] = useState(false)
   const [showRangeCircles, setShowRangeCircles] = useState(false) // 적 타워 사거리 표시 토글
   const [showHamburger, setShowHamburger] = useState(false)
   const [territoryLosses, setTerritoryLosses] = useState([])
   const siegeStatus = useGameStore(s => s.siegeStatus)
   const fetchSiegeStatus = useGameStore(s => s.fetchSiegeStatus)
+  const mySieges = useGameStore(s => s.mySieges)
+  const fetchMySieges = useGameStore(s => s.fetchMySieges)
 
-  // 공성 상태 60초마다
+  // 공성 상태 60초마다 (방어 + 공격 양쪽)
   useEffect(() => {
     if (!userId) return
     fetchSiegeStatus()
-    const id = setInterval(fetchSiegeStatus, 60000)
+    fetchMySieges()
+    const id = setInterval(() => { fetchSiegeStatus(); fetchMySieges() }, 60000)
     return () => clearInterval(id)
   }, [userId])
 
@@ -448,7 +485,7 @@ export default function App() {
     return { spreadPlayers: players, spreadFixedGuardians: fixed }
   }, [nearbyPlayers, nearbyFixedGuardians])
 
-  // AR 전환 — Unity 안이면 Unity에게, 아니면 PWA 자체 처리
+  // AR 전환 — Unity 안이면 Unity AR, 웹이면 야전 모드(Field Mode) 오버레이
   const switchToAR = () => {
     if (isInsideUnity()) {
       sendToUnity('SWITCH_TO_AR', {
@@ -458,9 +495,33 @@ export default function App() {
         userId: useGameStore.getState().userId
       })
     } else {
-      alert('AR 모드는 앱에서 지원됩니다')
+      setShowFieldMode(true)
     }
   }
+
+  // 디버그 텔레포트 — 사용자 위치를 임의 좌표로 이동
+  const teleportTo = (lat, lng) => {
+    setUserLocation({ latitude: lat, longitude: lng })
+    setMapCenter([lat, lng])
+    updateLocation(lat, lng)
+    sendToUnity('LOCATION_UPDATE', { lat, lng })
+    useGameStore.getState().showToast(`🚩 텔레포트 — ${lat.toFixed(5)}, ${lng.toFixed(5)}`, 'info')
+  }
+
+  // FieldMode → 타워 배치 / 발판 건설 핸들러
+  useEffect(() => {
+    const onPlace = (e) => setShowTowerModal(e.detail.territoryId)
+    const onGrant = (e) => {
+      setActiveGrant(e.detail.grant)
+      setShowTowerModal(e.detail.grant.territoryId)
+    }
+    window.addEventListener('field-mode-place', onPlace)
+    window.addEventListener('field-mode-grant', onGrant)
+    return () => {
+      window.removeEventListener('field-mode-place', onPlace)
+      window.removeEventListener('field-mode-grant', onGrant)
+    }
+  }, [])
 
   // 플레이어 조우 → Unity에 알림 (Unity가 AR 전투 처리)
   const handlePlayerEncounter = (player) => {
@@ -532,6 +593,11 @@ export default function App() {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
+        <TeleportClickHandler enabled={teleportMode} onTeleport={(lat, lng) => {
+          teleportTo(lat, lng)
+          setTeleportMode(false)
+        }} />
+
         {/* 진영(formation) 오버레이 — 연결선 / 호구(atari) / 눈 영역 */}
         {formationData && (() => {
           const tById = Object.fromEntries((formationData.territories || []).map(t => [t.id, t]))
@@ -586,7 +652,7 @@ export default function App() {
                 />
               ))}
 
-              {/* 공성 진행 영역 (자기 영역) — 주황 마커 + 카운트다운 */}
+              {/* 방어 — 내 영역이 공성당함 (주황) */}
               {(siegeStatus || []).map(s => {
                 const hr = Math.floor(s.secondsRemaining / 3600)
                 const min = Math.floor((s.secondsRemaining % 3600) / 60)
@@ -607,6 +673,46 @@ export default function App() {
                   </div>
                 )
               })}
+
+              {/* 공격 — 내가 breach 한 적 영역 (보라 grace 카운트다운) */}
+              {(mySieges?.breached || []).map(s => {
+                const hr = Math.floor(s.secondsRemaining / 3600)
+                const min = Math.floor((s.secondsRemaining % 3600) / 60)
+                return (
+                  <div key={`my-breach-${s.territoryId}`}>
+                    <Circle
+                      center={[s.center.lat, s.center.lng]}
+                      radius={s.radius * 1.10}
+                      pathOptions={{ color: '#aa44ff', weight: 3, fillColor: '#aa44ff', fillOpacity: 0.20, dashArray: '8,3' }}
+                    />
+                    <Marker
+                      position={[s.center.lat, s.center.lng]}
+                      icon={L.divIcon({
+                        html: `<div style="background:rgba(170,68,255,0.95);color:white;padding:4px 8px;border-radius:6px;font-size:11px;font-weight:bold;border:2px solid #8800cc;box-shadow:0 0 14px #aa44ff;white-space:nowrap;">⚔ 점령까지 ${hr}h ${min}m</div>`,
+                        iconSize: [120, 24], iconAnchor: [60, 12], className: 'my-breach'
+                      })}
+                    />
+                  </div>
+                )
+              })}
+
+              {/* 공격 — 내가 데미지 입히는 중인 적 영역 (노랑 진행도) */}
+              {(mySieges?.damaging || []).map(s => (
+                <div key={`my-dmg-${s.territoryId}`}>
+                  <Circle
+                    center={[s.center.lat, s.center.lng]}
+                    radius={s.radius * 1.05}
+                    pathOptions={{ color: '#ffdd44', weight: 2, fillColor: '#ffdd44', fillOpacity: 0.10, dashArray: '4,4' }}
+                  />
+                  <Marker
+                    position={[s.center.lat, s.center.lng]}
+                    icon={L.divIcon({
+                      html: `<div style="background:rgba(255,221,68,0.92);color:black;padding:3px 6px;border-radius:5px;font-size:10px;font-weight:bold;border:1px solid #cca800;white-space:nowrap;">🎯 ${s.towersAlive}/${s.towersTotal} 약화 ${s.minTowerHpPct}%</div>`,
+                      iconSize: [110, 22], iconAnchor: [55, 11], className: 'my-dmg'
+                    })}
+                  />
+                </div>
+              ))}
 
               {/* 잃은 영역 표시 (회색 X) */}
               {(territoryLosses || []).slice(0, 10).map(l => (
@@ -733,7 +839,7 @@ export default function App() {
             <Marker
               key={`fixed-${fg.id}`}
               position={[fg.position.lat + offsetLat, fg.position.lng + offsetLng]}
-              icon={createFixedGuardianIcon(fg.type, fg.owner, fg.towerClass, fg.tier)}
+              icon={createFixedGuardianIcon(fg.type, fg.owner, fg.towerClass, fg.tier, fg.stats?.hp, fg.stats?.maxHp)}
               eventHandlers={{
                 click: () => guardian && handleFixedGuardianAttack(fg)
               }}
@@ -747,6 +853,28 @@ export default function App() {
         <button onClick={switchToAR} style={styles.arBtn}>
           📷 AR 모드
         </button>
+      )}
+
+      {/* 디버그 — 위치 점프 모드 토글 */}
+      {userLocation && (
+        <button
+          onClick={() => setTeleportMode(!teleportMode)}
+          style={{
+            ...styles.teleportBtn,
+            background: teleportMode ? '#ff4444' : '#444',
+            color: teleportMode ? 'white' : '#aaa'
+          }}
+          title="ON 상태에서 맵을 탭하면 그 위치로 이동 (테스트용)"
+        >
+          🚩 {teleportMode ? '점프: 맵을 탭' : '위치 점프'}
+        </button>
+      )}
+
+      {/* 텔레포트 모드 시 화면 가장자리 빨간 보더 + 안내 */}
+      {teleportMode && (
+        <div style={styles.teleportOverlay}>
+          <div style={styles.teleportHint}>🚩 맵 어디든 탭 — 그 지점으로 즉시 이동 (다시 끄려면 버튼 다시 탭)</div>
+        </div>
       )}
 
       {/* 탐지 버튼 */}
@@ -974,7 +1102,43 @@ export default function App() {
 
       {showParts && <PartsPanel onClose={() => setShowParts(false)} />}
       {showLeaderboard && <Leaderboard onClose={() => setShowLeaderboard(false)} />}
-      {showTowerModal && <TowerPlacementModal territoryId={showTowerModal} onClose={() => setShowTowerModal(null)} />}
+      {showTowerModal && (
+        <TowerPlacementModal
+          territoryId={showTowerModal}
+          existingTowers={(useGameStore.getState().myFixedGuardians || []).filter(fg => fg.territoryId === showTowerModal)}
+          grant={activeGrant}
+          onClose={() => { setShowTowerModal(null); setActiveGrant(null) }}
+        />
+      )}
+
+      {showFieldMode && <FieldMode onClose={() => setShowFieldMode(false)} />}
+
+      {/* 슬롯 권리 배너 — 경로 A 격파 후 5분 내 무료 건설 CTA */}
+      {(slotGrants || []).length > 0 && !showTowerModal && (
+        <div style={styles.grantBanner}>
+          {slotGrants.slice(0, 1).map(g => {
+            const min = Math.floor(g.secondsRemaining / 60)
+            const sec = g.secondsRemaining % 60
+            return (
+              <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 18 }}>🗡</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 'bold' }}>
+                    {g.ownerName} 영역에 발판 확보
+                  </div>
+                  <div style={{ fontSize: 10, color: '#ffa' }}>
+                    무료 건설 {min}:{String(sec).padStart(2, '0')} 남음
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setActiveGrant(g); setShowTowerModal(g.territoryId) }}
+                  style={styles.grantBtn}
+                >🏰 건설</button>
+              </div>
+            )
+          })}
+        </div>
+      )}
       {showGuild && <GuildPanel onClose={() => setShowGuild(false)} />}
 
       {/* 햄버거 메뉴 (좁은 화면 통합) */}
@@ -1073,6 +1237,45 @@ const styles = {
     borderRadius: 8,
     fontWeight: 'bold',
     cursor: 'pointer'
+  },
+  grantBanner: {
+    position: 'absolute',
+    top: 70, left: '50%', transform: 'translateX(-50%)',
+    background: 'linear-gradient(135deg, #ff6644, #cc3322)',
+    color: 'white',
+    padding: '8px 14px', borderRadius: 12,
+    boxShadow: '0 4px 20px rgba(255,80,40,0.6)',
+    border: '2px solid #ff8866',
+    zIndex: 1600, minWidth: 280, maxWidth: 360
+  },
+  grantBtn: {
+    background: '#fff', color: '#cc2200', border: 'none',
+    padding: '8px 12px', borderRadius: 8, fontWeight: 'bold',
+    fontSize: 12, cursor: 'pointer'
+  },
+  teleportBtn: {
+    position: 'absolute',
+    bottom: 100,
+    left: 20,
+    padding: '10px 14px',
+    borderRadius: 50,
+    border: '2px solid #ff6644',
+    fontSize: 13,
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    zIndex: 1500,
+    boxShadow: '0 4px 14px rgba(255,68,68,0.4)'
+  },
+  teleportOverlay: {
+    position: 'absolute', inset: 0, pointerEvents: 'none',
+    border: '4px dashed #ff4444', zIndex: 1400,
+    boxSizing: 'border-box', animation: 'pulse 1.5s infinite'
+  },
+  teleportHint: {
+    position: 'absolute', top: 80, left: '50%', transform: 'translateX(-50%)',
+    background: 'rgba(255,68,68,0.95)', color: 'white',
+    padding: '8px 16px', borderRadius: 20, fontSize: 13, fontWeight: 'bold',
+    boxShadow: '0 4px 16px rgba(255,68,68,0.6)', whiteSpace: 'nowrap'
   },
   arBtn: {
     position: 'absolute',

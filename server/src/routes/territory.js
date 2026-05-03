@@ -72,17 +72,28 @@ router.post('/expand', async (req, res) => {
   try {
     const { userId, lat, lng, radius, towerType } = req.body
 
-    // 겹침 방지: 기존 영역과 두 반경의 합보다 가까우면 거절
+    // 겹침 방지: 기존 영역과 두 반경의 합보다 가까우면 거절 (자기/남 무관)
     const overlap = await db.query(
-      `SELECT id FROM territories
-       WHERE SQRT(
-         POW((center_lat - $1) * 111000, 2) +
-         POW((center_lng - $2) * 88700, 2)
-       ) < (radius + $3)`,
+      `SELECT t.id, t.user_id, u.username,
+              SQRT(POW((t.center_lat - $1) * 111000, 2) +
+                   POW((t.center_lng - $2) * 88700, 2)) AS dist,
+              t.radius
+       FROM territories t LEFT JOIN users u ON t.user_id = u.id
+       WHERE SQRT(POW((t.center_lat - $1) * 111000, 2) +
+                  POW((t.center_lng - $2) * 88700, 2)) < (t.radius + $3)
+       ORDER BY dist ASC LIMIT 1`,
       [lat, lng, radius]
     )
     if (overlap.rows.length > 0) {
-      return res.json({ success: false, error: '다른 영역과 겹칩니다. 위치를 조정해주세요.' })
+      const o = overlap.rows[0]
+      const isMine = o.user_id === userId
+      const who = isMine ? '내 영역' : `${o.username || '다른 사용자'}의 영역`
+      return res.json({
+        success: false,
+        error: `${who}과 겹칩니다 (${Math.round(o.dist)}m, 반경 ${Math.round(o.radius)}m). 다른 위치로 이동하세요.`,
+        overlapWithMine: isMine,
+        overlapOwner: o.username
+      })
     }
 
     const result = await db.query(
@@ -333,7 +344,10 @@ router.get('/nearby-fixed-guardians', async (req, res) => {
         owner: fg.username || '',
         ownerId: fg.user_id || '',
         position: { lat: fnum(fg.position_lat), lng: fnum(fg.position_lng) },
-        stats: { atk: num(fg.atk), def: num(fg.def), hp: num(fg.hp) },
+        stats: {
+          atk: num(fg.atk), def: num(fg.def),
+          hp: num(fg.hp), maxHp: num(fg.max_hp, num(fg.hp))
+        },
         type: fg.guardian_type || 'defense',
         territoryId: fg.territory_id || '',
         towerClass: fg.tower_class || 'arrow',

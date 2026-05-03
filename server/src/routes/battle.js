@@ -876,6 +876,7 @@ router.post('/attack-fixed-guardian', async (req, res) => {
 
     let absorbed = null
     let graduated = false
+    let slotGrant = null
 
     await db.transaction(async (client) => {
       let atkPower = attackerStats.atk * (0.8 + Math.random() * 0.4)
@@ -924,6 +925,25 @@ router.post('/attack-fixed-guardian', async (req, res) => {
             { byUserId: attackerId, parts: lootParts, energy: lootEnergy })
         }
 
+        // 경로 A 보상 — 5분간 그 자리에 무료 타워 1개 건설 권리(slot_grant)
+        try {
+          const grantRes = await client.query(
+            `INSERT INTO slot_grants (user_id, territory_id, position_lat, position_lng, expires_at)
+             VALUES ($1, $2, $3, $4, NOW() + INTERVAL '5 minutes')
+             RETURNING id, expires_at`,
+            [attackerId, targetFG.territory_id, targetFG.position_lat, targetFG.position_lng]
+          )
+          slotGrant = {
+            id: grantRes.rows[0].id,
+            territoryId: targetFG.territory_id,
+            position: {
+              lat: parseFloat(targetFG.position_lat),
+              lng: parseFloat(targetFG.position_lng)
+            },
+            expiresAt: grantRes.rows[0].expires_at
+          }
+        } catch (e) { /* 무시 */ }
+
         await client.query("UPDATE users SET battle_wins=COALESCE(battle_wins,0)+1 WHERE id=$1", [attackerId])
         graduated = await checkGraduation(client, attackerId)
         await require('../levels').gainXp(client, attackerId, 50, 'battle_win').catch(() => {})
@@ -948,6 +968,7 @@ router.post('/attack-fixed-guardian', async (req, res) => {
         defenderPower: Math.round(defPower),
         absorbed,
         graduated,
+        slotGrant,
         battleDetails: {
           attacker: { name: attackerStats.username, type: attackerStats.type, stats: { atk: attackerStats.atk, def: attackerStats.def, hp: attackerStats.hp } },
           defender: { name: targetFG.owner_name + '의 고정수호신', type: targetFG.guardian_type, stats: { atk: targetFG.atk, def: targetFG.def, hp: targetFG.hp } },

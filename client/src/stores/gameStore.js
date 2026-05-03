@@ -26,6 +26,7 @@ export const useGameStore = create((set, get) => ({
 
   // 영역
   territories: [],
+  myFixedGuardians: [], // 내가 소유한 타워들
   nearbyTerritories: [],
   expandingTerritory: null,
 
@@ -93,7 +94,10 @@ export const useGameStore = create((set, get) => ({
         if (data.userId) {
           const terrRes = await fetch(`${API_URL}/api/territory/my/${data.userId}`)
           const terrData = await terrRes.json()
-          set({ territories: terrData.territories?.map(t => ({ ...t, isOwn: true })) || [] })
+          set({
+            territories: terrData.territories?.map(t => ({ ...t, isOwn: true })) || [],
+            myFixedGuardians: terrData.fixedGuardians || []
+          })
 
           get().fetchParts()
           get().fetchOfflineSummary()
@@ -376,7 +380,7 @@ export const useGameStore = create((set, get) => ({
     } catch (e) { console.error('boss attack', e) }
   },
 
-  // 공성 상태
+  // 공성 상태 — 방어 (내가 당하는 공성)
   siegeStatus: [], // [{territoryId, center, secondsRemaining, towersAlive, attackerName}]
   fetchSiegeStatus: async () => {
     const { userId } = get()
@@ -385,6 +389,18 @@ export const useGameStore = create((set, get) => ({
       const r = await fetch(`${API_URL}/api/towers/siege-status/${userId}`)
       const d = await r.json()
       if (d.success) set({ siegeStatus: d.sieges || [] })
+    } catch {}
+  },
+
+  // 공성 상태 — 공격 (내가 공격 중인 적 영역)
+  mySieges: { breached: [], damaging: [] },
+  fetchMySieges: async () => {
+    const { userId } = get()
+    if (!userId) return
+    try {
+      const r = await fetch(`${API_URL}/api/towers/my-sieges/${userId}`)
+      const d = await r.json()
+      if (d.success) set({ mySieges: { breached: d.breached || [], damaging: d.damaging || [] } })
     } catch {}
   },
 
@@ -397,20 +413,36 @@ export const useGameStore = create((set, get) => ({
       set({ towerClasses: d.classes || null })
     } catch (e) {}
   },
-  placeTower: async (territoryId, towerClass, tier = 1) => {
+  placeTower: async (territoryId, towerClass, tier = 1, grantId = null) => {
     const { userId, showToast } = get()
     try {
       const r = await fetch(`${API_URL}/api/towers/place`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, territoryId, towerClass, tier })
+        body: JSON.stringify({ userId, territoryId, towerClass, tier, grantId })
       })
       const d = await r.json()
       if (d.success) {
-        showToast(`🏰 타워 배치 완료 (-${d.cost} 에너지)`, 'success')
+        const msg = d.foothold
+          ? `🗡 발판 확보! 적 영역에 타워 건설 (무료)`
+          : `🏰 타워 배치 완료 (-${d.cost} 에너지)`
+        showToast(msg, 'success')
         get().loadUserData()
+        get().fetchSlotGrants()
       } else showToast(d.error || '배치 실패', 'error')
       return d
     } catch (e) { return { success: false } }
+  },
+
+  // 슬롯 권리 (직접 침투 격파 후 5분 무료 건설)
+  slotGrants: [],
+  fetchSlotGrants: async () => {
+    const { userId } = get()
+    if (!userId) return
+    try {
+      const r = await fetch(`${API_URL}/api/towers/grants/${userId}`)
+      const d = await r.json()
+      if (d.success) set({ slotGrants: d.grants || [] })
+    } catch {}
   },
   upgradeTower: async (towerId) => {
     const { userId, showToast } = get()
@@ -610,6 +642,11 @@ export const useGameStore = create((set, get) => ({
       }
       if (execData.defenderDied) {
         get().showToast('상대방이 격파되었습니다! 초심자 레이어로 강등됩니다.', 'info')
+      }
+      // 경로 A 격파 보상 — slotGrant 발급되면 즉시 토스트 + 갱신
+      if (execData.slotGrant) {
+        get().showToast('🗡 적 영역에 발판 확보! 5분 내 무료 타워 1개 건설 가능', 'success')
+        get().fetchSlotGrants()
       }
     }, 4000)
   },

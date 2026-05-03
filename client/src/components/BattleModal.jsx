@@ -15,6 +15,11 @@ export default function BattleModal() {
   } = useGameStore()
 
   const [battlePhase, setBattlePhase]     = useState('choice')
+  const [pathSelected, setPathSelected]   = useState(null) // 'A' (직접 침투) | 'B' (공성) | null
+  // 새 전투 시작 시 경로 선택 초기화
+  useEffect(() => {
+    if (currentBattle?.status === 'intrusion_detected') setPathSelected(null)
+  }, [currentBattle?.territory?.id])
   const [animationStep, setAnimationStep] = useState(0)
   const [ultActivated, setUltActivated]   = useState(false)
   const [preview, setPreview]             = useState(null)
@@ -224,19 +229,70 @@ export default function BattleModal() {
     </div>
   )
 
-  // ─── 영역 침입 ────────────────────────────────────────────────
-  if (currentBattle.status === 'intrusion_detected' && battlePhase === 'choice') {
+  // ─── 영역 침입: 경로 선택 (A 직접 침투 vs B 공성) ───────────────
+  if (currentBattle.status === 'intrusion_detected' && battlePhase === 'choice' && !pathSelected) {
+    const t = currentBattle.territory
+    const onPickB = () => {
+      // 공성 경로: 이 자리에서 인접 영역 확장 시작
+      useGameStore.getState().startTerritoryExpand()
+      useGameStore.getState().showToast('⚒ 공성 경로 — 여기서 영역 확장 후 사거리 안에 타워 건설하세요', 'info')
+      closeBattleModal()
+    }
     return (
       <div style={styles.overlay}>
         <div style={styles.modal}>
           <div style={styles.alertIcon}>⚔️</div>
-          <h2 style={styles.title}>영역 발견!</h2>
+          <h2 style={styles.title}>적 영역 진입</h2>
           <p style={styles.desc}>
-            <b style={{ color: '#ffd700' }}>{currentBattle.territory?.username}</b>님의 영역
+            <b style={{ color: '#ffd700' }}>{t?.username}</b>의 영역 ({t?.radius}m)
           </p>
-          <div style={styles.territoryInfo}>
-            <div>영역 반경: {currentBattle.territory?.radius}m</div>
+          <div style={{ fontSize: 12, color: '#aaa', textAlign: 'center', margin: '6px 0 14px' }}>
+            점령 경로를 선택하세요
           </div>
+
+          {/* 경로 A — 직접 침투 */}
+          <button onClick={() => setPathSelected('A')} style={styles.pathBtnA}>
+            <div style={styles.pathHeader}>
+              <span style={{ fontSize: 22 }}>🗡</span>
+              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#ff6644' }}>A · 직접 침투</span>
+              <span style={styles.pathBadgeFast}>빠름</span>
+            </div>
+            <div style={styles.pathDesc}>
+              본체로 타워와 1:1 — 격파 시 그 자리에 무료 타워 건설
+            </div>
+            <div style={styles.pathMeta}>위험: 본체 HP 손실 · 5분 쿨다운 · AR 보너스 ×1.20</div>
+          </button>
+
+          {/* 경로 B — 공성 */}
+          <button onClick={onPickB} style={styles.pathBtnB}>
+            <div style={styles.pathHeader}>
+              <span style={{ fontSize: 22 }}>🏰</span>
+              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#aa44ff' }}>B · 공성</span>
+              <span style={styles.pathBadgeSafe}>안전</span>
+            </div>
+            <div style={styles.pathDesc}>
+              인접 영역 확장 + 타워로 자동 교전 — 6h grace 후 영역 통째로
+            </div>
+            <div style={styles.pathMeta}>비동기 · 본체 노출 없음 · 영역+타워 비용 부담</div>
+          </button>
+
+          <button onClick={closeBattleModal} style={styles.cancelBtn}>무시하고 지나가기</button>
+        </div>
+      </div>
+    )
+  }
+
+  // ─── 영역 침입: 경로 A 선택 후 — 기존 전투 UI ─────────────────
+  if (currentBattle.status === 'intrusion_detected' && battlePhase === 'choice' && pathSelected === 'A') {
+    return (
+      <div style={styles.overlay}>
+        <div style={styles.modal}>
+          <button onClick={() => setPathSelected(null)} style={styles.backBtn}>‹ 경로 선택</button>
+          <div style={styles.alertIcon}>🗡</div>
+          <h2 style={styles.title}>직접 침투</h2>
+          <p style={styles.desc}>
+            <b style={{ color: '#ffd700' }}>{currentBattle.territory?.username}</b>의 영역 ({currentBattle.territory?.radius}m)
+          </p>
           <BattlePreview />
           <BattleOptions />
           <div style={styles.choices}>
@@ -562,6 +618,33 @@ const styles = {
   cancelBtn: {
     background: 'transparent', color: '#666', border: '1px solid #333',
     padding: '10px 20px', borderRadius: 8, cursor: 'pointer', width: '100%', fontSize: 13
+  },
+  pathBtnA: {
+    width: '100%', textAlign: 'left', cursor: 'pointer',
+    background: 'linear-gradient(135deg, rgba(255,102,68,0.18), rgba(204,68,0,0.10))',
+    border: '2px solid #ff6644', borderRadius: 12,
+    padding: '12px 14px', marginBottom: 10, color: 'white'
+  },
+  pathBtnB: {
+    width: '100%', textAlign: 'left', cursor: 'pointer',
+    background: 'linear-gradient(135deg, rgba(170,68,255,0.18), rgba(102,0,153,0.10))',
+    border: '2px solid #aa44ff', borderRadius: 12,
+    padding: '12px 14px', marginBottom: 14, color: 'white'
+  },
+  pathHeader: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 },
+  pathDesc: { fontSize: 12, color: '#ddd', lineHeight: 1.4 },
+  pathMeta: { fontSize: 10, color: '#888', marginTop: 4 },
+  pathBadgeFast: {
+    marginLeft: 'auto', fontSize: 10, padding: '2px 6px', borderRadius: 4,
+    background: '#ff6644', color: 'black', fontWeight: 'bold'
+  },
+  pathBadgeSafe: {
+    marginLeft: 'auto', fontSize: 10, padding: '2px 6px', borderRadius: 4,
+    background: '#aa44ff', color: 'black', fontWeight: 'bold'
+  },
+  backBtn: {
+    background: 'transparent', color: '#888', border: 'none', cursor: 'pointer',
+    fontSize: 12, alignSelf: 'flex-start', marginBottom: 4, padding: 4
   },
   battleField: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
