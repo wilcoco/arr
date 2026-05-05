@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const db = require('../db')
+const { boxParams } = require('../spatialGrid')
 
 // 리더보드 (영역 점유 면적 기준 상위 20명)
 // ?season=current (시즌 전투승 기준) | all-time (누적 전투승 기준) | area (기본: 면적)
@@ -115,15 +116,18 @@ router.get('/debug/nearby-all', async (req, res) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.json({ territories: [] })
     }
+    const b = boxParams(lat, lng, 1500)
     const r = await db.query(
       `SELECT t.id, t.user_id, u.username, t.center_lat, t.center_lng, t.radius,
               SQRT(POW((t.center_lat - $1) * 111000, 2) +
                    POW((t.center_lng - $2) * 88700, 2)) AS dist
        FROM territories t LEFT JOIN users u ON t.user_id = u.id
-       WHERE SQRT(POW((t.center_lat - $1) * 111000, 2) +
+       WHERE t.center_lat BETWEEN $3 AND $4
+         AND t.center_lng BETWEEN $5 AND $6
+         AND SQRT(POW((t.center_lat - $1) * 111000, 2) +
                   POW((t.center_lng - $2) * 88700, 2)) < 1500
        ORDER BY dist ASC LIMIT 30`,
-      [lat, lng]
+      [lat, lng, b.latMin, b.latMax, b.lngMin, b.lngMax]
     )
     const fnum = (v) => parseFloat(v) || 0
     res.json({
@@ -224,7 +228,9 @@ router.get('/my/:userId', async (req, res) => {
         // P2-9: 자원 고갈 단계 + 약화 카운트다운
         warning_at: t.warning_at ? new Date(t.warning_at).toISOString() : '',
         weakened_at: t.weakened_at ? new Date(t.weakened_at).toISOString() : '',
-        parent_territory_id: t.parent_territory_id || null
+        parent_territory_id: t.parent_territory_id || null,
+        // D) Soft expansion 페널티(0.7) 또는 정상(1.0)
+        defense_penalty: fnum(t.defense_penalty, 1.0)
       })),
       fixedGuardians: fixedGuardians.rows.map(fg => ({
         id: fg.id || '',
@@ -252,14 +258,17 @@ router.post('/check-intrusion', async (req, res) => {
       return res.json({ intruded: false, territory: null })
     }
 
-    // 현재 위치가 다른 사람 영역 안에 있는지 확인
+    // 현재 위치가 다른 사람 영역 안에 있는지 확인 — 10km 박스 prefilter
+    const b = boxParams(parseFloat(lat), parseFloat(lng), 10000)
     const result = await db.query(
       `SELECT t.*, u.username
        FROM territories t
        JOIN users u ON t.user_id = u.id
        WHERE t.user_id::text != $1
+         AND t.center_lat BETWEEN $4 AND $5
+         AND t.center_lng BETWEEN $6 AND $7
          AND SQRT(POW(t.center_lat - $2, 2) + POW(t.center_lng - $3, 2)) * 111000 < t.radius`,
-      [userId, lat, lng]
+      [userId, lat, lng, b.latMin, b.latMax, b.lngMin, b.lngMax]
     )
 
     if (result.rows.length > 0) {

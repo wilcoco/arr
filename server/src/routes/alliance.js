@@ -24,8 +24,13 @@ router.get('/my/:userId', async (req, res) => {
         id: a.id,
         allyId: a.user_id_1 === userId ? a.user_id_2 : a.user_id_1,
         allyName: a.user_id_1 === userId ? a.user2_name : a.user1_name,
+        // E) 임시(50% 효율, 24h 내 정식 승격) | 정식(100% 효율, 7일)
+        stage: a.stage || 'temporary',
+        stageExpiresAt: a.stage_expires_at ? new Date(a.stage_expires_at).toISOString() : null,
+        efficiency: a.stage === 'permanent' ? 1.0 : 0.5,
         createdAt: a.created_at
-      }))
+      })),
+      maxAlliances: 10  // 클라이언트 표시용
     })
   } catch (err) {
     console.error('Get alliances error:', err)
@@ -146,12 +151,18 @@ router.post('/check-joint-defense', async (req, res) => {
           [alliance.ally_id]
         )
 
+        // E) 임시 동맹은 공동방어 효율 50%
+        const efficiency = alliance.stage === 'permanent' ? 1.0 : 0.5
+        const baseAtk = allyGuardian.rows[0]?.atk || 0
+        const baseDef = allyGuardian.rows[0]?.def || 0
         adjacentAllies.push({
           allyId: alliance.ally_id,
           allyName: allyUser.rows[0]?.username,
+          stage: alliance.stage || 'temporary',
+          efficiency,
           stats: allyGuardian.rows[0] ? {
-            atk: allyGuardian.rows[0].atk,
-            def: allyGuardian.rows[0].def
+            atk: Math.round(baseAtk * efficiency),
+            def: Math.round(baseDef * efficiency)
           } : null
         })
       }

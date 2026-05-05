@@ -129,12 +129,46 @@ async function ensureSchema() {
       in_eye_zone BOOLEAN DEFAULT false,
       siege_breached_at TIMESTAMP,
       siege_last_attacker UUID,
+      defense_penalty REAL DEFAULT 1.0,  -- D) Soft expansion: 20% 이내 겹침 영역 = 0.7
       created_at TIMESTAMP DEFAULT NOW()
     )
   `)
+  // 기존 테이블에 defense_penalty 컬럼이 없으면 추가 (forward-compat)
+  await db.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='territories' AND column_name='defense_penalty'
+      ) THEN
+        ALTER TABLE territories ADD COLUMN defense_penalty REAL DEFAULT 1.0;
+      END IF;
+    END $$;
+  `).catch(e => console.warn('[migrate] defense_penalty add warning:', e.message))
   await db.query(`CREATE INDEX IF NOT EXISTS idx_territories_location ON territories(center_lat, center_lng)`)
+  // 단일 컬럼 인덱스 추가 — BETWEEN $1 AND $2 prefilter가 두 컬럼 모두에서 인덱스를 쓰도록.
+  // (idx_territories_location 복합 인덱스는 첫 컬럼만 효율적이라 center_lng 단독 인덱스가 추가로 필요)
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_territories_lat ON territories(center_lat)`)
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_territories_lng ON territories(center_lng)`)
   await db.query(`CREATE INDEX IF NOT EXISTS idx_territories_user ON territories(user_id)`)
   await db.query(`CREATE INDEX IF NOT EXISTS idx_territories_parent ON territories(parent_territory_id)`)
+  // grid_cell — generated stored column (0.01° = ~1km 격자). 클러스터 통계/지역 쿼리에 활용.
+  // (PostgreSQL 12+ stored generated)
+  await db.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='territories' AND column_name='grid_cell'
+      ) THEN
+        ALTER TABLE territories ADD COLUMN grid_cell TEXT
+          GENERATED ALWAYS AS (
+            FLOOR(center_lat * 100)::TEXT || ',' || FLOOR(center_lng * 100)::TEXT
+          ) STORED;
+      END IF;
+    END $$;
+  `).catch(e => console.warn('[migrate] grid_cell add warning:', e.message))
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_territories_grid ON territories(grid_cell)`)
 
   // ─── fixed_guardians (=타워, territory와 1:1) ─────────────────────
   await db.query(`
@@ -224,10 +258,26 @@ async function ensureSchema() {
       user_id_1 UUID REFERENCES users(id) ON DELETE CASCADE,
       user_id_2 UUID REFERENCES users(id) ON DELETE CASCADE,
       active BOOLEAN DEFAULT TRUE,
+      stage VARCHAR(12) DEFAULT 'temporary',  -- E) 'temporary'(24h, 50% 효율) | 'permanent'(7d, 100%)
+      stage_expires_at TIMESTAMP,             -- 임시→정식 승격 시각, 정식→소멸 시각
       created_at TIMESTAMP DEFAULT NOW(),
       dissolved_at TIMESTAMP
     )
   `)
+  // forward-compat — 기존 테이블에 stage/stage_expires_at 추가
+  await db.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='alliances' AND column_name='stage') THEN
+        ALTER TABLE alliances ADD COLUMN stage VARCHAR(12) DEFAULT 'temporary';
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='alliances' AND column_name='stage_expires_at') THEN
+        ALTER TABLE alliances ADD COLUMN stage_expires_at TIMESTAMP;
+      END IF;
+    END $$;
+  `).catch(e => console.warn('[migrate] alliances stage warning:', e.message))
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_alliances_active_user ON alliances(user_id_1, active) WHERE active = true`)
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_alliances_active_user2 ON alliances(user_id_2, active) WHERE active = true`)
   await db.query(`
     CREATE TABLE IF NOT EXISTS alliance_requests (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

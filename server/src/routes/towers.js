@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const db = require('../db')
-const { buildSpatialIndex } = require('../spatialGrid')
+const { buildSpatialIndex, boxParams } = require('../spatialGrid')
 const levelTable = require('../levelTable')
 
 // Lv5에서 사거리 보정(×1.4) 후의 이론 최대 사거리. 이 값으로 셀을 잡고 인접 9칸만 보면
@@ -121,14 +121,19 @@ async function processTowerDamage(userId, lat, lng) {
   )
   const friendlyIds = new Set([userId, ...al.rows.map(r => r.u)])
 
-  // 1km 이내의 타워만 가져오기 (효율)
+  // 1km 이내의 타워만 가져오기 — box prefilter로 idx_territories_lat/lng 활성화.
+  // territories.defense_penalty 같이 가져와 발사 데미지에 곱 (D Soft expansion).
+  const b = boxParams(lat, lng, 1000)
   const fg = await db.query(
-    `SELECT fg.*, t.center_lat AS terr_lat, t.center_lng AS terr_lng
+    `SELECT fg.*, t.center_lat AS terr_lat, t.center_lng AS terr_lng,
+            COALESCE(t.defense_penalty, 1.0) AS terr_pen
      FROM fixed_guardians fg
      JOIN territories t ON fg.territory_id = t.id
      WHERE fg.user_id != $1
+       AND t.center_lat BETWEEN $4 AND $5
+       AND t.center_lng BETWEEN $6 AND $7
        AND SQRT(POW((t.center_lat - $2) * 111000, 2) + POW((t.center_lng - $3) * 88700, 2)) < 1000`,
-    [userId, lat, lng]
+    [userId, lat, lng, b.latMin, b.latMax, b.lngMin, b.lngMax]
   )
 
   const strikes = []
@@ -150,6 +155,8 @@ async function processTowerDamage(userId, lat, lng) {
     // 효과별 데미지 보정
     let appliedDmg = stats.damage
     if (stats.effect === 'first_shot_50' && !lastFired) appliedDmg = Math.round(appliedDmg * 1.5)
+    // D) Soft expansion 영역(20% 겹침)은 방어 페널티 — 타워 데미지 ×0.7
+    appliedDmg = Math.round(appliedDmg * (parseFloat(tw.terr_pen) || 1.0))
 
     // 발사 기록
     await db.query(`UPDATE fixed_guardians SET last_fired_at = NOW() WHERE id = $1`, [tw.id])
@@ -285,25 +292,38 @@ router.post('/place', async (req, res) => {
       })
     }
 
-    // 위치가 다른 영역(자기/남) 안에 있는지 — 가장 가까운 1개만 가져와 판단
-    const inside = await client.query(
+    // 위치가 다른 영역(자기/남) 안에 있는지 — box prefilter로 idx_territories_lat/lng 활용.
+    // ABS_MAX_RADIUS_M(10km) 박스로 잡아도 도시 단위에서는 풀스캔 대비 큰 폭 단축.
+    // ─── D) Soft expansion: 새 영역이 다른 영역과 20% 이내로 겹치면 허용(방어계수 ×0.7),
+    //     20% 초과면 거부. 신규 유저 진입성 확보. host(중심이 안에 있는 영역)는 종전대로 처리.
+    const probeBox = boxParams(lat, lng, levelTable.ABS_MAX_RADIUS_M)
+    const candidates = await client.query(
       `SELECT id, user_id, center_lat, center_lng, radius FROM territories
-       WHERE SQRT(POW((center_lat - $1) * 111000, 2) + POW((center_lng - $2) * 88700, 2)) < radius
-       ORDER BY SQRT(POW((center_lat - $1) * 111000, 2) + POW((center_lng - $2) * 88700, 2)) ASC LIMIT 1`,
-      [lat, lng]
+       WHERE center_lat BETWEEN $3 AND $4
+         AND center_lng BETWEEN $5 AND $6
+         AND SQRT(POW((center_lat - $1) * 111000, 2) + POW((center_lng - $2) * 88700, 2))
+             < (radius + $7)`,
+      [lat, lng, probeBox.latMin, probeBox.latMax, probeBox.lngMin, probeBox.lngMax, claimRadiusM]
     )
 
     let parentTerritoryId = null
     let isFoothold = false
+    let softOverlap = false  // D) 20% 이내 겹침 시 true → 방어 페널티 적용
 
-    if (inside.rows.length > 0) {
-      const host = inside.rows[0]
+    // 중심이 안에 들어가는 host 식별 (자기 vs 남)
+    let host = null, hostDist = Infinity
+    for (const c of candidates.rows) {
+      const dx = (parseFloat(c.center_lat) - lat) * 111000
+      const dy = (parseFloat(c.center_lng) - lng) * 88700
+      const d = Math.sqrt(dx*dx + dy*dy)
+      if (d < parseFloat(c.radius) && d < hostDist) { host = c; hostDist = d }
+    }
+
+    if (host) {
       const isOwn = host.user_id === userId
       if (isOwn) {
-        // 자기-속국 — 계약 불필요. 부모 영역만 기록.
         parentTerritoryId = host.id
       } else {
-        // 남의 영역 — grant(격파 보상) 만 허용. 속국은 lord-accept로 별도 경로.
         if (!grantId) {
           await client.query('ROLLBACK')
           return res.json({
@@ -328,6 +348,37 @@ router.post('/place', async (req, res) => {
         lat = parseFloat(g.rows[0].position_lat)
         lng = parseFloat(g.rows[0].position_lng)
       }
+    } else {
+      // host 없음 — 외곽 겹침 (원-원 교차) 검사: 적 영역과 면적 20% 초과 겹치면 거부
+      // 두 원 교차 면적 공식: 작은 원 면적 대비 비율로 평가.
+      function circleOverlapPct(d, r1, r2) {
+        if (d >= r1 + r2) return 0
+        if (d + Math.min(r1, r2) <= Math.max(r1, r2)) return 1  // 완전 포함
+        const a1 = r1*r1 * Math.acos((d*d + r1*r1 - r2*r2)/(2*d*r1))
+        const a2 = r2*r2 * Math.acos((d*d + r2*r2 - r1*r1)/(2*d*r2))
+        const a3 = 0.5 * Math.sqrt(Math.max(0, (-d+r1+r2)*(d+r1-r2)*(d-r1+r2)*(d+r1+r2)))
+        const inter = a1 + a2 - a3
+        const minArea = Math.PI * Math.min(r1, r2) * Math.min(r1, r2)
+        return Math.max(0, Math.min(1, inter / minArea))
+      }
+      let maxOverlap = 0
+      for (const c of candidates.rows) {
+        if (c.user_id === userId) continue  // 자기 영역끼리는 제약 없음
+        const dx = (parseFloat(c.center_lat) - lat) * 111000
+        const dy = (parseFloat(c.center_lng) - lng) * 88700
+        const d = Math.sqrt(dx*dx + dy*dy)
+        const ov = circleOverlapPct(d, parseFloat(c.radius), claimRadiusM)
+        if (ov > maxOverlap) maxOverlap = ov
+      }
+      if (maxOverlap > 0.20) {
+        await client.query('ROLLBACK')
+        return res.json({
+          success: false,
+          error: `다른 영역과 ${Math.round(maxOverlap * 100)}% 겹칩니다 (한도 20%)`,
+          overlapPct: Math.round(maxOverlap * 100)
+        })
+      }
+      if (maxOverlap > 0) softOverlap = true  // 20% 이내 — 허용하되 페널티
     }
 
     const tierNum = parseInt(tier) || 1
@@ -345,10 +396,13 @@ router.post('/place', async (req, res) => {
     }
 
     // territory INSERT (사용자 = 타워 주인. 속국이라도 vassal 본인 소유)
+    // softOverlap이면 방어계수 ×0.7 영구 적용 (D)
+    const defensePenalty = softOverlap ? 0.7 : 1.0
     const territoryRes = await client.query(
-      `INSERT INTO territories (user_id, center_lat, center_lng, radius, parent_territory_id, tower_type)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [userId, lat, lng, claimRadiusM, parentTerritoryId, towerClass === 'production' ? 'revenue' : 'normal']
+      `INSERT INTO territories (user_id, center_lat, center_lng, radius, parent_territory_id, tower_type, defense_penalty)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [userId, lat, lng, claimRadiusM, parentTerritoryId,
+       towerClass === 'production' ? 'revenue' : 'normal', defensePenalty]
     )
     const territory = territoryRes.rows[0]
 
@@ -385,11 +439,13 @@ router.post('/place', async (req, res) => {
         userId: territory.user_id,
         center: { lat: parseFloat(territory.center_lat), lng: parseFloat(territory.center_lng) },
         radius: parseInt(territory.radius),
-        parentTerritoryId: territory.parent_territory_id || null
+        parentTerritoryId: territory.parent_territory_id || null,
+        defensePenalty
       },
       tower: towerRes.rows[0],
       cost: costPaid,
-      foothold: isFoothold
+      foothold: isFoothold,
+      softOverlap
     })
   } catch (e) {
     try { await client.query('ROLLBACK') } catch {}
@@ -476,7 +532,9 @@ router.get('/strikes/:userId', async (req, res) => {
 // 적 타워가 내 타워 사거리에 있으면 자동 발사. 양방향.
 async function processTowerSiege() {
   const allTowers = await db.query(
-    `SELECT fg.*, t.center_lat, t.center_lng FROM fixed_guardians fg
+    `SELECT fg.*, t.center_lat, t.center_lng,
+            COALESCE(t.defense_penalty, 1.0) AS terr_pen
+     FROM fixed_guardians fg
      JOIN territories t ON fg.territory_id = t.id
      WHERE fg.hp > 0`
   )
@@ -518,8 +576,8 @@ async function processTowerSiege() {
       const d = distMeters(a.center_lat, a.center_lng, b.center_lat, b.center_lng)
       if (d > aStats.range) continue
 
-      // 발사
-      const dmg = aStats.damage
+      // 발사 — soft overlap 영역(0.7)이면 데미지 약화
+      const dmg = Math.max(1, Math.round(aStats.damage * (parseFloat(a.terr_pen) || 1.0)))
       await db.query(`UPDATE fixed_guardians SET last_fired_at = NOW() WHERE id = $1`, [a.id])
       const newHp = await db.query(
         `UPDATE fixed_guardians SET hp = GREATEST(0, hp - $1) WHERE id = $2 RETURNING hp, max_hp`,
@@ -653,7 +711,8 @@ router.get('/my-sieges/:userId', async (req, res) => {
          AND t.user_id != $1`,
       [userId]
     )
-    // 내 타워 사거리 안에서 데미지 받은 적 타워들
+    // 내 타워 사거리 안에서 데미지 받은 적 타워들 — MAX_TOWER_RANGE_M 박스로 prefilter
+    const RANGE_DEG = MAX_TOWER_RANGE_M / 111000
     const damaged = await db.query(
       `SELECT DISTINCT t.id, t.center_lat, t.center_lng, t.radius, t.user_id AS owner_id,
               u.username AS owner_name,
@@ -670,11 +729,13 @@ router.get('/my-sieges/:userId', async (req, res) => {
            SELECT 1 FROM fixed_guardians my_fg
            JOIN territories my_t ON my_fg.territory_id = my_t.id
            WHERE my_fg.user_id = $1
+             AND ABS(my_t.center_lat - t.center_lat) < $2
+             AND ABS(my_t.center_lng - t.center_lng) < $2
              AND SQRT(POW((my_t.center_lat - t.center_lat) * 111000, 2) +
                       POW((my_t.center_lng - t.center_lng) * 88700, 2)) < my_fg.tower_range
          )
        LIMIT 20`,
-      [userId]
+      [userId, RANGE_DEG]
     )
     const fnum = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d }
     const num = (v, d = 0) => { const n = parseInt(v); return Number.isFinite(n) ? n : d }

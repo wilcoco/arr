@@ -214,6 +214,7 @@ if (placeHandler) {
   queryQueue.push({ rows: [{ level: 5, xp: 1000, energy_currency: 5000 }] })  // user
   queryQueue.push({ rows: [{ n: 0 }] })
   queryQueue.push({ rows: [{ used: 0 }] })
+  // candidates: 1개 후보 — 중심이 lat/lng와 일치 → host 식별됨
   queryQueue.push({ rows: [{ id: 't_other', user_id: 'u_other', center_lat: 37.5, center_lng: 127.0, radius: 200 }] })
   res = makeRes()
   await placeHandler(makeReq({
@@ -221,6 +222,26 @@ if (placeHandler) {
   }), res)
   ok('남의 영역 안 + grant 없음 → 거부 + hostTerritoryId 안내',
      res.body && res.body.success === false && res.body.hostTerritoryId === 't_other',
+     JSON.stringify(res.body))
+
+  // D) Soft expansion: 외곽 25% 겹침 → 거부
+  reset()
+  queryQueue.push({ rows: [{ level: 5, xp: 1000, energy_currency: 5000 }] })  // user
+  queryQueue.push({ rows: [{ n: 0 }] })
+  queryQueue.push({ rows: [{ used: 0 }] })
+  // candidates: 적 영역 중심을 200m 옆에 (50m 새 영역 + 200m 적 영역 → 큰 겹침)
+  // 두 원 중심거리 d=200m, r1=200m(적), r2=50m(나) → 작은 원이 거의 포함 → overlap ~100% → 거부
+  queryQueue.push({ rows: [{
+    id: 't_overlap', user_id: 'u_other',
+    center_lat: 37.5 + 200/111000, center_lng: 127.0,
+    radius: 200
+  }] })
+  res = makeRes()
+  await placeHandler(makeReq({
+    userId: 'u1', lat: 37.5, lng: 127.0, towerClass: 'generic', claimRadiusM: 50
+  }), res)
+  ok('soft overlap > 20% → 거부 + overlapPct 안내',
+     res.body && res.body.success === false && /겹/.test(res.body.error || ''),
      JSON.stringify(res.body))
 }
 
@@ -273,6 +294,14 @@ if (expandHandler) {
   ok('expand 410 응답', res.statusCode === 410 && res.body.deprecated === true,
      `${res.statusCode} ${JSON.stringify(res.body)}`)
 }
+
+console.log('\n=== 4.5. E) 동맹 한도 / 단계 ===')
+const battle = require(path.resolve(__dirname, '../server/src/routes/battle.js'))
+ok('battle.js 모듈 로드', !!battle, '')
+// 헬퍼는 module.exports에 노출되지 않을 수 있음 — 라우트 핸들러 호출로 검증
+// /respond에서 alliance 선택 시 한도 초과 시뮬
+const respondHandler = findHandler(battle, 'POST', '/respond')
+ok('POST /respond 핸들러 존재', !!respondHandler, '')
 
 console.log('\n=== 5. 라우트 등록 검증 ===')
 const routeFiles = ['guardian','territory','battle','alliance','parts','activity',

@@ -10,6 +10,33 @@ const BATTLE_REQ_TIMEOUT_MS  = 60 * 1000          // 전투 응답 60초
 const ALLIANCE_TIMEOUT_MS    = 5 * 60 * 1000      // 동맹 응답 5분
 const isExpired = (ts) => ts && new Date(ts) < new Date()
 
+// E) 동맹 한도 / 단계 — 한 명당 active 동맹 최대 10명, 신규는 임시(24h)로 시작
+const ALLIANCE_MAX_PER_USER = 10
+const ALLIANCE_TEMP_HOURS = 24
+
+// 동맹 가입 시도 — 한도 검증 + 임시 단계로 INSERT.
+// 반환: { ok: true, id } 또는 { ok: false, error }
+async function tryCreateAlliance(client, userIdA, userIdB) {
+  const q = client || db
+  for (const uid of [userIdA, userIdB]) {
+    const r = await q.query(
+      `SELECT COUNT(*) AS n FROM alliances
+       WHERE active = true AND (user_id_1 = $1 OR user_id_2 = $1)`,
+      [uid]
+    )
+    if (parseInt(r.rows[0].n) >= ALLIANCE_MAX_PER_USER) {
+      return { ok: false, error: `${uid === userIdA ? '본인' : '상대'}이 동맹 최대 ${ALLIANCE_MAX_PER_USER}개 한도 초과` }
+    }
+  }
+  const ins = await q.query(
+    `INSERT INTO alliances (user_id_1, user_id_2, active, stage, stage_expires_at)
+     VALUES ($1, $2, true, 'temporary', NOW() + ($3 || ' hours')::INTERVAL)
+     RETURNING id`,
+    [userIdA, userIdB, ALLIANCE_TEMP_HOURS]
+  )
+  return { ok: true, id: ins.rows[0].id }
+}
+
 function defenseCoeff(radius) {
   return Math.min(1.0, 50 / (radius || 50))
 }
@@ -357,11 +384,12 @@ router.post('/alliance-respond', async (req, res) => {
     const target = await db.query('SELECT username FROM users WHERE id=$1', [r.target_id])
 
     if (accept) {
-      await db.query(
-        `INSERT INTO alliances (user_id_1, user_id_2, active) VALUES ($1,$2,true)`,
-        [r.requester_id, r.target_id]
-      )
-      await sendPush(r.requester_token, '🤝 동맹 성사!', `${target.rows[0]?.username}이(가) 동맹을 수락했습니다!`,
+      const al = await tryCreateAlliance(null, r.requester_id, r.target_id)
+      if (!al.ok) {
+        await db.query(`UPDATE alliance_requests SET status='declined' WHERE id=$1`, [requestId])
+        return res.json({ success: false, error: al.error })
+      }
+      await sendPush(r.requester_token, '🤝 동맹 성사 (임시 24h)!', `${target.rows[0]?.username}이(가) 동맹을 수락했습니다 (24h 임시, 50% 효율)`,
         { type: 'ALLIANCE_ACCEPTED', targetId: r.target_id })
     } else {
       await sendPush(r.requester_token, '❌ 동맹 거절', `${target.rows[0]?.username}이(가) 동맹을 거절했습니다`,
@@ -433,8 +461,12 @@ router.post('/respond', async (req, res) => {
 
     if (ub.attacker_choice && ub.defender_choice) {
       if (ub.attacker_choice === 'alliance' && ub.defender_choice === 'alliance') {
+        const al = await tryCreateAlliance(null, ub.attacker_id, ub.defender_id)
+        if (!al.ok) {
+          await db.query('UPDATE battles SET status = $1 WHERE id = $2', ['cancelled', battleId])
+          return res.json({ success: false, error: al.error })
+        }
         await db.query('UPDATE battles SET status = $1 WHERE id = $2', ['alliance_formed', battleId])
-        await db.query(`INSERT INTO alliances (user_id_1, user_id_2, active) VALUES ($1,$2,true)`, [ub.attacker_id, ub.defender_id])
         return res.json({ success: true, result: 'alliance' })
       } else {
         await db.query('UPDATE battles SET status = $1 WHERE id = $2', ['in_progress', battleId])
@@ -744,7 +776,8 @@ router.post('/request-player', async (req, res) => {
         [attackerId, defenderId]
       )
       if (existing.rows.length > 0) return res.json({ success: false, error: '이미 동맹 관계입니다' })
-      await db.query(`INSERT INTO alliances (user_id_1, user_id_2, active) VALUES ($1,$2,true)`, [attackerId, defenderId])
+      const al = await tryCreateAlliance(null, attackerId, defenderId)
+      if (!al.ok) return res.json({ success: false, error: al.error })
       return res.json({ success: true, result: 'alliance_proposed' })
     }
 

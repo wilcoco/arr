@@ -140,18 +140,22 @@ async function runEconomyTick() {
     await db.query(`UPDATE guardians SET ult_charge = LEAST(100, COALESCE(ult_charge, 0) + 5)`)
 
     // 6.6. Nature 타워 인접 회복 (자기/동맹 타워 HP +5%/tick, 50m 내)
+    //      box prefilter (50m → 약 0.00045°) 로 인덱스 활용
     try {
       const natures = await db.query(`SELECT fg.id, fg.user_id, t.center_lat, t.center_lng FROM fixed_guardians fg
                                        JOIN territories t ON fg.territory_id=t.id WHERE fg.tower_class='nature'`)
+      const HEAL_DEG = 50 / 111000
       for (const n of natures.rows) {
         await db.query(
           `UPDATE fixed_guardians SET hp = LEAST(max_hp, hp + GREATEST(1, FLOOR(max_hp * 0.05)))
            WHERE id IN (
              SELECT fg2.id FROM fixed_guardians fg2 JOIN territories t2 ON fg2.territory_id=t2.id
              WHERE fg2.user_id = $1
+               AND t2.center_lat BETWEEN $2 - $4 AND $2 + $4
+               AND t2.center_lng BETWEEN $3 - $4 AND $3 + $4
                AND SQRT(POW((t2.center_lat - $2) * 111000, 2) + POW((t2.center_lng - $3) * 88700, 2)) < 50
            )`,
-          [n.user_id, n.center_lat, n.center_lng]
+          [n.user_id, n.center_lat, n.center_lng, HEAL_DEG]
         ).catch(() => {})
       }
     } catch {}
@@ -347,6 +351,26 @@ async function runEconomyTick() {
        WHERE status='pending' AND expires_at < NOW() RETURNING id`
     )
 
+    // 9.5. E) 동맹 단계 진행
+    //   임시(temporary) 24h 만료 → 정식(permanent)으로 승격, 7일 후 자동 dissolve
+    //   정식(permanent) stage_expires_at 만료 → dissolve
+    let allyPromoted = 0, allyDissolved = 0
+    try {
+      const promoted = await db.query(
+        `UPDATE alliances SET stage='permanent',
+                              stage_expires_at = NOW() + INTERVAL '7 days'
+         WHERE active = true AND stage = 'temporary' AND stage_expires_at < NOW()
+         RETURNING id`
+      )
+      allyPromoted = promoted.rows.length
+      const dissolved = await db.query(
+        `UPDATE alliances SET active = false, dissolved_at = NOW()
+         WHERE active = true AND stage = 'permanent' AND stage_expires_at < NOW()
+         RETURNING id`
+      )
+      allyDissolved = dissolved.rows.length
+    } catch (e) { console.error('[Economy] alliance stage tick:', e.message) }
+
     // 10. 7일 지난 activity_events 청소 (무한 누적 방지)
     let purgedEvents = 0
     try {
@@ -358,7 +382,7 @@ async function runEconomyTick() {
       console.error('[Economy] activity_events purge error:', e.message)
     }
 
-    console.log(`[Economy] tick — ${expired.rows.length} expired terr, ${partsDropped} parts(direct), ${partsToStorage} parts(storage), ${energyAuto} energy auto, tribute ${tributeTotal}/${tributeCount}, ${expiredBattles.rows.length} battles + ${expiredAlliances.rows.length} alliances expired, atari[+${atariStarted}/-${atariResolved}/cap${atariCaptures}], purged ${purgedEvents} old events`)
+    console.log(`[Economy] tick — ${expired.rows.length} expired terr, ${partsDropped} parts(direct), ${partsToStorage} parts(storage), ${energyAuto} energy auto, tribute ${tributeTotal}/${tributeCount}, ${expiredBattles.rows.length} battles + ${expiredAlliances.rows.length} alliances expired, atari[+${atariStarted}/-${atariResolved}/cap${atariCaptures}], allies[promoted${allyPromoted}/dissolved${allyDissolved}], purged ${purgedEvents} old events`)
   } catch (err) {
     console.error('[Economy] tick error:', err.message)
   }

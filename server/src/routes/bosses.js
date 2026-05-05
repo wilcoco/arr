@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const db = require('../db')
+const { boxParams } = require('../spatialGrid')
 
 const BOSS_TYPES = [
   { key: 'guardian_titan',  hp: 5000,  atk: 80,  def: 50, ttlHours: 12 },
@@ -37,10 +38,13 @@ async function spawnBosses() {
   // 1km 이내 사용자 푸시
   try {
     const { sendPush } = require('../fcm')
+    const ub = boxParams(lat, lng, 1000)
     const nearby = await db.query(
       `SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL AND last_seen_at > NOW() - INTERVAL '24 hours'
+        AND last_location_lat BETWEEN $3 AND $4
+        AND last_location_lng BETWEEN $5 AND $6
         AND SQRT(POW((last_location_lat - $1) * 111000, 2) + POW((last_location_lng - $2) * 88700, 2)) < 1000`,
-      [lat, lng]
+      [lat, lng, ub.latMin, ub.latMax, ub.lngMin, ub.lngMax]
     )
     for (const u of nearby.rows) {
       await sendPush(u.fcm_token, '👹 월드 보스 출현!',
@@ -81,10 +85,13 @@ router.get('/nearby', async (req, res) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.json({ bosses: [] })
     }
+    const bb = boxParams(lat, lng, 1000)
     const r = await db.query(
       `SELECT * FROM world_bosses WHERE dead_at IS NULL AND expires_at > NOW()
+        AND center_lat BETWEEN $3 AND $4
+        AND center_lng BETWEEN $5 AND $6
         AND SQRT(POW((center_lat - $1) * 111000, 2) + POW((center_lng - $2) * 88700, 2)) < 1000`,
-      [lat, lng]
+      [lat, lng, bb.latMin, bb.latMax, bb.lngMin, bb.lngMax]
     )
     res.json({ bosses: r.rows.map(b => ({
       id: b.id, type: b.boss_type,

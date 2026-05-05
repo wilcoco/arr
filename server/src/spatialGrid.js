@@ -74,4 +74,19 @@ function buildSpatialIndex(items, getLatLng, cellSizeMeters) {
   return { cellSize: cellSizeMeters, neighbors, forEachPair }
 }
 
-module.exports = { buildSpatialIndex }
+// 위경도 박스 prefilter 파라미터.
+// 인덱스가 걸린 center_lat / center_lng 컬럼에 BETWEEN을 적용해 SQRT 풀스캔을 회피.
+// 한국 위도 가정. 사용 예:
+//   const b = boxParams(lat, lng, 1000)
+//   SELECT ... WHERE center_lat BETWEEN $a AND $b AND center_lng BETWEEN $c AND $d AND SQRT(...) < limit
+function boxParams(lat, lng, radiusMeters) {
+  const dLat = radiusMeters / M_PER_DEG_LAT
+  const cosLat = Math.max(0.1, Math.cos(lat * Math.PI / 180))
+  const dLng = radiusMeters / (M_PER_DEG_LAT * cosLat)
+  return {
+    latMin: lat - dLat, latMax: lat + dLat,
+    lngMin: lng - dLng, lngMax: lng + dLng
+  }
+}
+
+module.exports = { buildSpatialIndex, boxParams, M_PER_DEG_LAT }

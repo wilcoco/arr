@@ -25,18 +25,21 @@ function isLinked(t1, t2) {
   return d < (Number(t1.radius) + Number(t2.radius)) * LINK_DISTANCE_MULT
 }
 
-// 동맹 관계 맵 만들기: { userId: Set<allyUserId> }
+// 동맹 관계 맵 만들기: { userId: Map<allyUserId, weight> }
+//   weight = 1.0 (정식) | 0.5 (임시 24h) — synergy/joint-defense 기여도에 곱
 async function buildAllianceMap() {
-  const r = await db.query(`SELECT user_id_1, user_id_2 FROM alliances WHERE active = true`)
+  const r = await db.query(`SELECT user_id_1, user_id_2, stage FROM alliances WHERE active = true`)
   const map = new Map()
+  function add(a, b, w) {
+    if (!map.has(a)) map.set(a, new Map())
+    map.get(a).set(b, Math.max(map.get(a).get(b) || 0, w))
+  }
   for (const row of r.rows) {
-    if (!map.has(row.user_id_1)) map.set(row.user_id_1, new Set())
-    if (!map.has(row.user_id_2)) map.set(row.user_id_2, new Set())
-    map.get(row.user_id_1).add(row.user_id_2)
-    map.get(row.user_id_2).add(row.user_id_1)
-    // 자기 자신도 포함 (편의)
-    map.get(row.user_id_1).add(row.user_id_1)
-    map.get(row.user_id_2).add(row.user_id_2)
+    const w = row.stage === 'permanent' ? 1.0 : 0.5
+    add(row.user_id_1, row.user_id_2, w)
+    add(row.user_id_2, row.user_id_1, w)
+    add(row.user_id_1, row.user_id_1, 1.0)
+    add(row.user_id_2, row.user_id_2, 1.0)
   }
   return map
 }
@@ -44,6 +47,12 @@ async function buildAllianceMap() {
 function isFriendly(allyMap, ownerA, ownerB) {
   if (ownerA === ownerB) return true
   return !!(allyMap.get(ownerA)?.has(ownerB))
+}
+
+// 동맹 가중치(0.5 임시 / 1.0 정식). 적이거나 동맹 아니면 0.
+function allyWeight(allyMap, ownerA, ownerB) {
+  if (ownerA === ownerB) return 1.0
+  return allyMap.get(ownerA)?.get(ownerB) || 0
 }
 
 // 모든 영역의 진영(formation) 상태 계산
@@ -73,9 +82,10 @@ async function computeFormation() {
   idx.forEachPair(t => t.id, (a, b) => {
     if (!isLinked(a, b)) return
     const friendly = isFriendly(allyMap, a.user_id, b.user_id)
-    links.push({ a: a.id, b: b.id, friendly, aUser: a.user_id, bUser: b.user_id })
-    adj.get(a.id).push({ otherId: b.id, friendly, otherUserId: b.user_id })
-    adj.get(b.id).push({ otherId: a.id, friendly, otherUserId: a.user_id })
+    const weight = allyWeight(allyMap, a.user_id, b.user_id)  // 0 / 0.5 / 1.0
+    links.push({ a: a.id, b: b.id, friendly, weight, aUser: a.user_id, bUser: b.user_id })
+    adj.get(a.id).push({ otherId: b.id, friendly, weight, otherUserId: b.user_id })
+    adj.get(b.id).push({ otherId: a.id, friendly, weight, otherUserId: a.user_id })
   })
 
   // 2) 각 영역의 단수(atari) 상태 계산
@@ -93,13 +103,12 @@ async function computeFormation() {
     }
   }
 
-  // 3) 동맹 시너지 — 각 사용자가 가진 우호 연결 수
-  // synergyByUser: userId -> linkedFriendlyTerritoriesCount
+  // 3) 동맹 시너지 — 우호 연결의 가중치 합 (임시는 0.5, 정식은 1.0, 자기 자신은 1.0)
   const synergyByUser = new Map()
   for (const t of territories) {
-    const friendlyLinks = adj.get(t.id).filter(e => e.friendly).length
+    const w = adj.get(t.id).filter(e => e.friendly).reduce((s, e) => s + (e.weight || 1.0), 0)
     if (!synergyByUser.has(t.user_id)) synergyByUser.set(t.user_id, 0)
-    synergyByUser.set(t.user_id, synergyByUser.get(t.user_id) + friendlyLinks)
+    synergyByUser.set(t.user_id, synergyByUser.get(t.user_id) + w)
   }
 
   // 4) "눈" 감지 (간이): 내 영역이 ≥3개의 같은 사용자 영역으로 둘러싸여 있고 적 영역이 인접 없으면 in_eye
