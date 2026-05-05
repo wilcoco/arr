@@ -29,6 +29,12 @@ export const useGameStore = create((set, get) => ({
   myFixedGuardians: [], // 내가 소유한 타워들
   nearbyTerritories: [],
   expandingTerritory: null,
+  selectedTowerClass: 'generic',  // β 모델: 영역 = 타워 1:1, 클래스 선택 필요
+  towerClasses: null,             // GET /api/towers/classes 캐시
+
+  // 속국(vassal) 계약
+  vassalIncoming: [],   // 내가 lord인 pending 제안들
+  vassalActive: [],     // 내가 가입돼 있는 active 계약들
 
   // 주변 플레이어 / 고정 수호신
   nearbyPlayers: [],
@@ -247,41 +253,54 @@ export const useGameStore = create((set, get) => ({
     if (expandingTerritory) set({ expandingTerritory: { ...expandingTerritory, radius } })
   },
 
-  confirmTerritory: async (towerType = 'normal') => {
-    const { expandingTerritory, userId, userLocation, showToast } = get()
+  // β 모델: 영역 확장 = 타워 배치. /api/towers/place로 라우팅.
+  //   기존 시그니처/UI 유지를 위해 confirmTerritory 함수명은 보존.
+  //   towerClass는 selectedTowerClass에서, 없으면 'generic'.
+  confirmTerritory: async (towerTypeArg = 'normal', tier = 1) => {
+    const { expandingTerritory, userId, userLocation, showToast, selectedTowerClass } = get()
     if (!expandingTerritory) { showToast('확장 모드가 아닙니다', 'error'); return }
     if (!userId) { showToast('로그인 정보 없음 — 새로고침 후 재시도', 'error'); return }
     if (!userLocation) { showToast('위치 정보 없음 — GPS 권한 확인', 'error'); return }
     set({ loading: true })
-    showToast('🏗 확장 시도 중...', 'info')
+    showToast('🏗 타워 건설 중...', 'info')
 
-    // 항상 현재 userLocation 기준 — 텔레포트 후 옛 좌표로 가는 것 방지
     const lat = userLocation?.latitude ?? expandingTerritory.center.latitude
     const lng = userLocation?.longitude ?? expandingTerritory.center.longitude
+    const towerClass = selectedTowerClass || (towerTypeArg === 'revenue' ? 'production' : 'generic')
 
     try {
-      const res = await fetch(`${API_URL}/api/territory/expand`, {
+      const res = await fetch(`${API_URL}/api/towers/place`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId, lat, lng,
-          radius: expandingTerritory.radius,
-          towerType
+          userId, lat, lng, towerClass, tier,
+          claimRadiusM: expandingTerritory.radius
         })
       })
       const data = await res.json()
 
       if (data.success) {
+        // 새 territory + tower 둘 다 받음. UI 상태에 반영.
+        const newTerr = data.territory
+        const newTower = data.tower
         set(state => ({
-          territories: [...state.territories, { ...data.territory, isOwn: true }],
+          territories: [...state.territories, {
+            id: newTerr.id, userId: newTerr.userId,
+            center: { lat: newTerr.center.lat, lng: newTerr.center.lng },
+            radius: newTerr.radius,
+            parentTerritoryId: newTerr.parentTerritoryId,
+            isOwn: true
+          }],
+          myFixedGuardians: [...state.myFixedGuardians, newTower],
           expandingTerritory: null,
           loading: false
         }))
-        showToast(`✅ 영역 확장 완료 (${data.territory?.radius || ''}m)`, 'success')
+        showToast(`✅ ${towerClass} 타워 건설 (반경 ${newTerr.radius}m, ${data.cost}E)`, 'success')
+        get().loadUserData()
         return data
       } else {
         set({ error: data.error, loading: false })
-        showToast(`❌ ${data.error || '확장 실패'}`, 'error')
+        showToast(`❌ ${data.error || '건설 실패'}`, 'error')
       }
       return data
     } catch (err) {
@@ -290,36 +309,135 @@ export const useGameStore = create((set, get) => ({
     }
   },
 
-  placeFixedGuardian: async (territoryId, lat, lng, stats, guardianType) => {
-    const { userId } = get()
+  // β 모델: 추가 타워 = 새 영역. 기존 호출자 호환 위해 시그니처 보존.
+  placeFixedGuardian: async (territoryId, lat, lng, _statsIgnored, guardianType) => {
+    const { userId, selectedTowerClass, showToast } = get()
     if (!userId) return { success: false, error: '로그인 필요' }
-
+    const towerClass = selectedTowerClass || (guardianType === 'production' ? 'production' : 'generic')
     try {
-      const res = await fetch(`${API_URL}/api/territory/place-guardian`, {
+      const res = await fetch(`${API_URL}/api/towers/place`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ territoryId, userId, lat, lng, stats, guardianType })
+        body: JSON.stringify({
+          userId, lat, lng, towerClass, tier: 1,
+          claimRadiusM: 100
+        })
       })
       const data = await res.json()
-
       if (data.success) {
-        set(state => ({
-          guardian: state.guardian ? {
-            ...state.guardian,
-            stats: {
-              ...state.guardian.stats,
-              atk: state.guardian.stats.atk - stats.atk,
-              def: state.guardian.stats.def - stats.def,
-              hp: state.guardian.stats.hp - stats.hp
-            }
-          } : null
-        }))
         get().loadUserData()
+        showToast?.(`✅ ${towerClass} 타워 건설 (${data.cost}E)`, 'success')
+      } else {
+        showToast?.(`❌ ${data.error || '배치 실패'}`, 'error')
       }
       return data
     } catch (err) {
       return { success: false, error: err.message }
     }
+  },
+
+  setSelectedTowerClass: (cls) => set({ selectedTowerClass: cls }),
+
+  fetchTowerClasses: async () => {
+    if (get().towerClasses) return get().towerClasses
+    try {
+      const res = await fetch(`${API_URL}/api/towers/classes`)
+      const data = await res.json()
+      set({ towerClasses: data.classes })
+      return data.classes
+    } catch (err) {
+      console.error('fetchTowerClasses error:', err)
+      return null
+    }
+  },
+
+  // ─── 속국(vassal) 계약 ────────────────────────────────────────
+  proposeVassal: async (lordTerritoryId, lat, lng, claimRadiusM, towerClass, tributeToLordPct) => {
+    const { userId, showToast } = get()
+    if (!userId) return { success: false, error: '로그인 필요' }
+    try {
+      const res = await fetch(`${API_URL}/api/vassal/propose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vassalUserId: userId, lordTerritoryId, lat, lng,
+          claimRadiusM, towerClass, tributeToLordPct
+        })
+      })
+      const data = await res.json()
+      if (data.success) showToast?.(`✅ 속국 제안 전송 (만료 ${data.expiresInHours}h)`, 'success')
+      else showToast?.(`❌ ${data.error}`, 'error')
+      return data
+    } catch (err) { return { success: false, error: err.message } }
+  },
+
+  acceptVassal: async (contractId) => {
+    const { userId, showToast } = get()
+    try {
+      const res = await fetch(`${API_URL}/api/vassal/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lordUserId: userId, contractId })
+      })
+      const data = await res.json()
+      if (data.success) {
+        showToast?.('✅ 속국 계약 성립', 'success')
+        get().fetchVassalIncoming()
+        get().fetchVassalActive()
+      } else showToast?.(`❌ ${data.error}`, 'error')
+      return data
+    } catch (err) { return { success: false, error: err.message } }
+  },
+
+  rejectVassal: async (contractId) => {
+    const { userId } = get()
+    try {
+      const res = await fetch(`${API_URL}/api/vassal/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lordUserId: userId, contractId })
+      })
+      const data = await res.json()
+      if (data.success) get().fetchVassalIncoming()
+      return data
+    } catch (err) { return { success: false, error: err.message } }
+  },
+
+  dissolveVassal: async (contractId) => {
+    const { userId, showToast } = get()
+    try {
+      const res = await fetch(`${API_URL}/api/vassal/dissolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, contractId })
+      })
+      const data = await res.json()
+      if (data.success) {
+        showToast?.('속국 계약 해제', 'info')
+        get().fetchVassalActive()
+      }
+      return data
+    } catch (err) { return { success: false, error: err.message } }
+  },
+
+  fetchVassalIncoming: async () => {
+    const { userId } = get()
+    if (!userId) return
+    try {
+      const res = await fetch(`${API_URL}/api/vassal/incoming/${userId}`)
+      const data = await res.json()
+      if (data.success) set({ vassalIncoming: data.proposals || [] })
+    } catch (err) { console.error('fetchVassalIncoming:', err) }
+  },
+
+  fetchVassalActive: async () => {
+    const { userId } = get()
+    if (!userId) return
+    try {
+      const res = await fetch(`${API_URL}/api/vassal/my/${userId}`)
+      const data = await res.json()
+      if (data.success) set({ vassalActive: data.contracts || [] })
+    } catch (err) { console.error('fetchVassalActive:', err) }
   },
 
   // ─── 진영(formation) 상태 — 바둑 시각화용 ──────────────────

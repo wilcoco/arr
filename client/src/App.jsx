@@ -7,6 +7,7 @@ import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 import { useGameStore } from './stores/gameStore'
 import GuardianPanel from './components/GuardianPanel'
 import TerritoryControls from './components/TerritoryControls'
+import VassalPanel from './components/VassalPanel'
 import BattleModal from './components/BattleModal'
 import PWAInstall from './components/PWAInstall'
 import PartsPanel from './components/PartsPanel'
@@ -240,6 +241,7 @@ export default function App() {
   const [lastAlertCount, setLastAlertCount] = useState(0)
   const [showParts, setShowParts] = useState(false)
   const [showLeaderboard, setShowLeaderboard] = useState(false)
+  const [showVassal, setShowVassal] = useState(false)
 
   const {
     visitorId,
@@ -1022,6 +1024,11 @@ export default function App() {
         🏆
       </button>
 
+      {/* 속국 패널 버튼 */}
+      <button onClick={() => setShowVassal(true)} style={styles.vassalBtn}>
+        🤝
+      </button>
+
       {/* 미션 버튼 (완료 가능한 게 있으면 펄스) */}
       {guardian && (() => {
         const claimable = (missions || []).filter(m => m.completed && !m.claimed).length
@@ -1132,6 +1139,7 @@ export default function App() {
 
       {showParts && <PartsPanel onClose={() => setShowParts(false)} />}
       {showLeaderboard && <Leaderboard onClose={() => setShowLeaderboard(false)} />}
+      {showVassal && <VassalPanel onClose={() => setShowVassal(false)} />}
       {showTowerModal && (
         <TowerPlacementModal
           territoryId={showTowerModal}
@@ -1450,6 +1458,12 @@ const styles = {
     cursor: 'pointer',
     zIndex: 1500,
     boxShadow: '0 4px 15px rgba(0,0,0,0.4)'
+  },
+  vassalBtn: {
+    position: 'absolute', bottom: 274, right: 20,
+    width: 46, height: 46, borderRadius: 50, border: 'none',
+    background: 'rgba(60,30,60,0.9)', color: 'white', fontSize: 22,
+    cursor: 'pointer', zIndex: 1500, boxShadow: '0 4px 15px rgba(0,0,0,0.4)'
   },
   hamburgerBtn: {
     position: 'absolute', top: 14, right: 14,
