@@ -12,6 +12,7 @@ const levelTable = require('../levelTable')
 const { TOWER_CLASSES, towerStats } = require('./towers')
 
 const PROPOSE_TTL_HOURS = 24
+const VASSAL_PER_LORD_MAX = 5  // G) 속국 lord 한도 — 조공 폭주 차단
 
 // POST /api/vassal/propose
 //   body: { vassalUserId, lordTerritoryId, lat, lng, claimRadiusM, towerClass, tributeToLordPct }
@@ -137,6 +138,19 @@ router.post('/accept', async (req, res) => {
       return res.json({ success: false, error: '유효한 pending 계약 없음 (만료/없음/권한 X)' })
     }
     const ct = c.rows[0]
+
+    // G) lord 한도 검증 — active 속국 ≥5면 거부
+    const ac = await client.query(
+      `SELECT COUNT(*) AS n FROM vassal_contracts WHERE lord_user_id=$1 AND status='active'`,
+      [lordUserId]
+    )
+    if (parseInt(ac.rows[0].n) >= VASSAL_PER_LORD_MAX) {
+      await client.query('ROLLBACK')
+      return res.json({
+        success: false,
+        error: `속국 최대 ${VASSAL_PER_LORD_MAX}명 한도 초과 (현재 ${ac.rows[0].n}명) — 기존 dissolve 후 재시도`
+      })
+    }
 
     // vassal의 cap/예산/개수 재확인 (제안 시점 ~ accept 시점에 변동 가능)
     const uRes = await client.query('SELECT level FROM users WHERE id=$1', [ct.vassal_user_id])

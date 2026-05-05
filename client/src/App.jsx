@@ -803,12 +803,49 @@ export default function App() {
           />
         )}
 
+        {/* J) 마커 culling — N=1000 환경에서 영역 폭발(평균 8/유저=8000) 시 렌더 부담.
+               각 카테고리마다 200개 한도 + 사용자 위치 거리순 정렬. */}
+        {(() => {
+          const MARKER_CAP = 200
+          const cx = userLocation?.latitude ?? 37.5
+          const cy = userLocation?.longitude ?? 127.0
+          const distSq = (a, b) => {
+            const dx = (a - cx) * 111
+            const dy = (b - cy) * 88.7
+            return dx*dx + dy*dy
+          }
+          // 한 번만 정렬해서 closure로 노출
+          if (territories.length > MARKER_CAP) {
+            window.__terr_culled = territories.slice().sort((a, b) =>
+              distSq(a.center.lat, a.center.lng) - distSq(b.center.lat, b.center.lng)
+            ).slice(0, MARKER_CAP)
+          } else window.__terr_culled = territories
+          if (nearbyTerritories.length > MARKER_CAP) {
+            window.__nearby_culled = nearbyTerritories.slice().sort((a, b) =>
+              distSq(a.center.lat, a.center.lng) - distSq(b.center.lat, b.center.lng)
+            ).slice(0, MARKER_CAP)
+          } else window.__nearby_culled = nearbyTerritories
+          if (nearbyFixedGuardians.length > MARKER_CAP) {
+            window.__fg_culled = nearbyFixedGuardians.slice().sort((a, b) =>
+              distSq(a.position.lat, a.position.lng) - distSq(b.position.lat, b.position.lng)
+            ).slice(0, MARKER_CAP)
+          } else window.__fg_culled = nearbyFixedGuardians
+          if (nearbyPlayers.length > MARKER_CAP) {
+            window.__np_culled = nearbyPlayers.slice().sort((a, b) =>
+              distSq(a.location.lat, a.location.lng) - distSq(b.location.lat, b.location.lng)
+            ).slice(0, MARKER_CAP)
+          } else window.__np_culled = nearbyPlayers
+          return null
+        })()}
+
         {/* 내 영역들 — 클릭 시 타워 배치 모달.
-            warning_at 있으면 노란색(자원 경고), weakened_at 있으면 빨간 점선(약화) — P2-9 */}
-        {territories.map(t => {
+            warning_at 있으면 노란색(자원 경고), weakened_at 있으면 빨간 점선(약화) — P2-9
+            defense_penalty < 1 (soft overlap) 영역은 흰색 테두리 추가 */}
+        {(window.__terr_culled || territories).map(t => {
           const warned = !!t.warning_at
           const weakened = !!t.weakened_at
-          const color = weakened ? '#ff4444' : warned ? '#ffaa00' : '#00ff88'
+          const softPen = t.defense_penalty != null && t.defense_penalty < 1.0
+          const color = weakened ? '#ff4444' : warned ? '#ffaa00' : softPen ? '#88aaff' : '#00ff88'
           return (
             <Circle
               key={t.id}
@@ -819,15 +856,15 @@ export default function App() {
                 color,
                 fillColor: color,
                 fillOpacity: weakened ? 0.35 : 0.2,
-                weight: warned ? 3 : 1,
-                dashArray: weakened ? '5, 5' : undefined
+                weight: warned ? 3 : softPen ? 2 : 1,
+                dashArray: weakened ? '5, 5' : softPen ? '3, 3' : undefined
               }}
             />
           )
         })}
 
         {/* 다른 플레이어 영역들 */}
-        {nearbyTerritories.map(t => (
+        {(window.__nearby_culled || nearbyTerritories).map(t => (
           <Circle
             key={t.id}
             center={[t.center.lat, t.center.lng]}
@@ -841,7 +878,7 @@ export default function App() {
         ))}
 
         {/* 다른 플레이어들 - 충돌 방지 오프셋 적용 */}
-        {nearbyPlayers && nearbyPlayers.map((player, idx) => {
+        {(window.__np_culled || nearbyPlayers).map((player, idx) => {
           const offsetLng = (idx % 5) * 0.0003
           const offsetLat = Math.floor(idx / 5) * 0.0003
           return (
@@ -857,7 +894,7 @@ export default function App() {
         })}
 
         {/* 다른 플레이어의 고정 수호신들 */}
-        {nearbyFixedGuardians && nearbyFixedGuardians.map((fg, idx) => {
+        {(window.__fg_culled || nearbyFixedGuardians).map((fg, idx) => {
           const offsetLng = (idx % 5) * 0.0003 + 0.00015
           const offsetLat = Math.floor(idx / 5) * 0.0003 + 0.00015
           return (

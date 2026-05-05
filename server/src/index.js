@@ -21,8 +21,9 @@ const bossesRoutes = require('./routes/bosses');
 const towersRoutes = require('./routes/towers');
 const vassalRoutes = require('./routes/vassal');
 const guildsRoutes = require('./routes/guilds');
-const { processTowerSiege, processSiegeExpiry } = require('./routes/towers');
+const { processTowerSiege, processSiegeExpiry, respawnNpcsForActive } = require('./routes/towers');
 const { spawnBosses, expireOldBosses } = require('./routes/bosses');
+const { sendPush } = require('./fcm');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -354,15 +355,48 @@ async function runEconomyTick() {
     // 9.5. E) 동맹 단계 진행
     //   임시(temporary) 24h 만료 → 정식(permanent)으로 승격, 7일 후 자동 dissolve
     //   정식(permanent) stage_expires_at 만료 → dissolve
-    let allyPromoted = 0, allyDissolved = 0
+    //   I) 정식 stage_expires_at 24h 전에 양측 푸시 (1회만)
+    let allyPromoted = 0, allyDissolved = 0, allyExpiringNotified = 0
     try {
       const promoted = await db.query(
         `UPDATE alliances SET stage='permanent',
                               stage_expires_at = NOW() + INTERVAL '7 days'
          WHERE active = true AND stage = 'temporary' AND stage_expires_at < NOW()
-         RETURNING id`
+         RETURNING id, user_id_1, user_id_2`
       )
       allyPromoted = promoted.rows.length
+      // 승격 알림 — 양측에 푸시
+      for (const a of promoted.rows) {
+        try {
+          const u = await db.query('SELECT id, fcm_token FROM users WHERE id = ANY($1)', [[a.user_id_1, a.user_id_2]])
+          for (const r of u.rows) {
+            if (r.fcm_token) await sendPush(r.fcm_token, '🤝 동맹 정식 승격',
+              '24시간 임시 동맹이 정식 동맹(7일)으로 승격되었습니다 — 효율 100%',
+              { type: 'ALLIANCE_PROMOTED', allianceId: a.id })
+          }
+        } catch {}
+      }
+
+      // I) 정식 만료 24h 전 알림 (notification_sent_at NULL이거나 stage_expires_at 변경된 경우)
+      const expiring = await db.query(
+        `SELECT id, user_id_1, user_id_2, stage_expires_at FROM alliances
+         WHERE active = true AND stage = 'permanent'
+           AND stage_expires_at BETWEEN NOW() AND NOW() + INTERVAL '24 hours'
+           AND notification_sent_at IS NULL`
+      )
+      for (const a of expiring.rows) {
+        try {
+          const u = await db.query('SELECT id, fcm_token FROM users WHERE id = ANY($1)', [[a.user_id_1, a.user_id_2]])
+          for (const r of u.rows) {
+            if (r.fcm_token) await sendPush(r.fcm_token, '⏰ 동맹 만료 임박',
+              '정식 동맹이 24시간 후 자동 해제됩니다. 유지하려면 새로 동맹 요청',
+              { type: 'ALLIANCE_EXPIRING', allianceId: a.id })
+          }
+          await db.query(`UPDATE alliances SET notification_sent_at = NOW() WHERE id = $1`, [a.id])
+        } catch {}
+        allyExpiringNotified++
+      }
+
       const dissolved = await db.query(
         `UPDATE alliances SET active = false, dissolved_at = NOW()
          WHERE active = true AND stage = 'permanent' AND stage_expires_at < NOW()
@@ -370,6 +404,19 @@ async function runEconomyTick() {
       )
       allyDissolved = dissolved.rows.length
     } catch (e) { console.error('[Economy] alliance stage tick:', e.message) }
+
+    // 9.6. H) Soft overlap defense_penalty 7일 회복
+    //   created_at 기준 7일 경과한 영역의 0.7 → 1.0으로 자연 회복.
+    //   신규 유저 좌절 완화 (영구 페널티 → 일시적 약점)
+    let penaltyRecovered = 0
+    try {
+      const r = await db.query(
+        `UPDATE territories SET defense_penalty = 1.0
+         WHERE defense_penalty < 1.0 AND created_at < NOW() - INTERVAL '7 days'
+         RETURNING id`
+      )
+      penaltyRecovered = r.rowCount || 0
+    } catch (e) { console.error('[Economy] defense_penalty recovery:', e.message) }
 
     // 10. 7일 지난 activity_events 청소 (무한 누적 방지)
     let purgedEvents = 0
@@ -382,7 +429,7 @@ async function runEconomyTick() {
       console.error('[Economy] activity_events purge error:', e.message)
     }
 
-    console.log(`[Economy] tick — ${expired.rows.length} expired terr, ${partsDropped} parts(direct), ${partsToStorage} parts(storage), ${energyAuto} energy auto, tribute ${tributeTotal}/${tributeCount}, ${expiredBattles.rows.length} battles + ${expiredAlliances.rows.length} alliances expired, atari[+${atariStarted}/-${atariResolved}/cap${atariCaptures}], allies[promoted${allyPromoted}/dissolved${allyDissolved}], purged ${purgedEvents} old events`)
+    console.log(`[Economy] tick — ${expired.rows.length} expired terr, ${partsDropped} parts(direct), ${partsToStorage} parts(storage), ${energyAuto} energy auto, tribute ${tributeTotal}/${tributeCount}, ${expiredBattles.rows.length} battles + ${expiredAlliances.rows.length} alliances expired, atari[+${atariStarted}/-${atariResolved}/cap${atariCaptures}], allies[promoted${allyPromoted}/expiring${allyExpiringNotified}/dissolved${allyDissolved}], penalty[recover${penaltyRecovered}], purged ${purgedEvents} old events`)
   } catch (err) {
     console.error('[Economy] tick error:', err.message)
   }
@@ -401,13 +448,14 @@ setInterval(async () => {
 // 서버 시작 후 첫 스폰 시도
 setTimeout(() => spawnBosses().catch(() => {}), 30 * 1000)
 
-// 5분마다 타워 공성 sub-tick (타워 vs 타워 + siege 만료 체크)
+// 5분마다 타워 공성 sub-tick (타워 vs 타워 + siege 만료 체크 + NPC respawn)
 setInterval(async () => {
   try {
     const siege = await processTowerSiege()
     const expiry = await processSiegeExpiry()
-    if (siege.exchanges > 0 || expiry.captures > 0) {
-      console.log(`[Siege] tower exchanges: ${siege.exchanges}, destroyed: ${siege.destroyed}, territory captures: ${expiry.captures}`)
+    const respawn = await respawnNpcsForActive()
+    if (siege.exchanges > 0 || expiry.captures > 0 || respawn.spawned > 0) {
+      console.log(`[Siege] exchanges: ${siege.exchanges}, destroyed: ${siege.destroyed}, captures: ${expiry.captures}, NPC respawn: ${respawn.spawned}`)
     }
   } catch (e) { console.error('siege tick', e.message) }
 }, 5 * 60 * 1000)

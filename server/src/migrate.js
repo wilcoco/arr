@@ -260,6 +260,7 @@ async function ensureSchema() {
       active BOOLEAN DEFAULT TRUE,
       stage VARCHAR(12) DEFAULT 'temporary',  -- E) 'temporary'(24h, 50% 효율) | 'permanent'(7d, 100%)
       stage_expires_at TIMESTAMP,             -- 임시→정식 승격 시각, 정식→소멸 시각
+      notification_sent_at TIMESTAMP,         -- I) 만료 24h 전 푸시 발송 시각 (1회만)
       created_at TIMESTAMP DEFAULT NOW(),
       dissolved_at TIMESTAMP
     )
@@ -273,6 +274,9 @@ async function ensureSchema() {
       END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='alliances' AND column_name='stage_expires_at') THEN
         ALTER TABLE alliances ADD COLUMN stage_expires_at TIMESTAMP;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='alliances' AND column_name='notification_sent_at') THEN
+        ALTER TABLE alliances ADD COLUMN notification_sent_at TIMESTAMP;
       END IF;
     END $$;
   `).catch(e => console.warn('[migrate] alliances stage warning:', e.message))

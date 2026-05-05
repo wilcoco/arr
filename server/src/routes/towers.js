@@ -54,6 +54,77 @@ async function spawnStarterNpc(spawnerUserId, spawnerLat, spawnerLng) {
   return { npcId, lat: npcLat, lng: npcLng }
 }
 
+// F) NPC respawn — 5분마다 호출. 활성 사용자 인근에 적 영역 부족하면 NPC 1체 spawn.
+// 조건: 사용자가 24h 내 활동 + 1km 이내 다른 플레이어 영역 0개 (자기 영역 제외) + 본인 영역 ≥1개
+// 효과: 첫 spawn처럼 200m 떨어진 곳에 Lv1 NPC. 단 사용자 레벨에 비례한 강도.
+async function respawnNpcsForActive() {
+  let spawned = 0
+  try {
+    // 24h 내 활동 + 영역 보유한 사용자
+    const users = await db.query(
+      `SELECT u.id, u.level, u.last_location_lat AS lat, u.last_location_lng AS lng
+       FROM users u
+       WHERE u.last_seen_at > NOW() - INTERVAL '24 hours'
+         AND u.last_location_lat IS NOT NULL
+         AND u.username NOT LIKE 'NPC_%'
+         AND EXISTS (SELECT 1 FROM territories WHERE user_id = u.id)
+       LIMIT 100`
+    )
+    for (const u of users.rows) {
+      const lat = parseFloat(u.lat), lng = parseFloat(u.lng)
+      if (!Number.isFinite(lat)) continue
+      // 1km 이내 다른 사람 영역 카운트 (자기 제외)
+      const b = boxParams(lat, lng, 1000)
+      const cnt = await db.query(
+        `SELECT COUNT(*) AS n FROM territories
+         WHERE user_id != $1
+           AND center_lat BETWEEN $4 AND $5
+           AND center_lng BETWEEN $6 AND $7
+           AND SQRT(POW((center_lat - $2) * 111000, 2) + POW((center_lng - $3) * 88700, 2)) < 1000`,
+        [u.id, lat, lng, b.latMin, b.latMax, b.lngMin, b.lngMax]
+      )
+      if (parseInt(cnt.rows[0].n) > 0) continue   // 이미 적이 있음 — skip
+      // NPC spawn — 강도는 사용자 레벨에 비례 (1~5 cap)
+      const tier = Math.max(1, Math.min(5, Math.floor((parseInt(u.level) || 1) / 2)))
+      const angle = Math.random() * 2 * Math.PI
+      const dLat = (200 * Math.cos(angle)) / 111000
+      const cosLat = Math.max(0.1, Math.cos(lat * Math.PI / 180))
+      const dLng = (200 * Math.sin(angle)) / (111000 * cosLat)
+      const npcLat = lat + dLat, npcLng = lng + dLng
+
+      const npcName = 'NPC_' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 1000)
+      const upd = await db.query(
+        `INSERT INTO users (username, energy_currency, level, xp, user_layer)
+         VALUES ($1, 1000, 1, 0, 'beginner') RETURNING id`,
+        [npcName]
+      )
+      const npcId = upd.rows[0].id
+      await db.query(
+        `INSERT INTO guardians (user_id, type, atk, def, hp, abs, prd, spd, rng, ter)
+         VALUES ($1, 'animal', 30, 30, 100, 5, 20, 10, 30, 30)`,
+        [npcId]
+      )
+      const stats = towerStats('generic', tier)
+      const t = await db.query(
+        `INSERT INTO territories (user_id, center_lat, center_lng, radius, tower_type)
+         VALUES ($1, $2, $3, 100, 'normal') RETURNING id`,
+        [npcId, npcLat, npcLng]
+      )
+      await db.query(
+        `INSERT INTO fixed_guardians (user_id, territory_id, guardian_type, tower_class, tier,
+                                       tower_range, fire_rate_ms, atk, def, hp, max_hp,
+                                       position_lat, position_lng)
+         VALUES ($1, $2, 'defense', 'generic', $3, $4, $5, $6, $7, $8, $8, $9, $10)`,
+        [npcId, t.rows[0].id, tier, stats.range, stats.fireRateMs,
+         stats.damage, Math.round(stats.damage * 0.5), stats.hp, npcLat, npcLng]
+      )
+      spawned++
+      if (spawned >= 10) break  // 한 tick에 너무 많이 spawn 방지
+    }
+  } catch (e) { console.error('[Respawn NPC] error:', e.message) }
+  return { spawned }
+}
+
 // 13종 타워 (Piloto Studio TowerDefenseStarterPack 매핑)
 // effect 종류:
 //   aoe         : 폭발 반경(m) 내 모두 데미지
@@ -797,5 +868,6 @@ module.exports = router
 module.exports.processTowerDamage = processTowerDamage
 module.exports.processTowerSiege = processTowerSiege
 module.exports.processSiegeExpiry = processSiegeExpiry
+module.exports.respawnNpcsForActive = respawnNpcsForActive
 module.exports.TOWER_CLASSES = TOWER_CLASSES
 module.exports.towerStats = towerStats
