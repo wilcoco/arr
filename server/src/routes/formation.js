@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const db = require('../db')
+const { buildSpatialIndex } = require('../spatialGrid')
 
 const LINK_DISTANCE_MULT = 1.5      // 두 영역 거리 < (r1+r2)*1.5 → 연결
 const ATARI_SURROUND_MIN = 3        // 적 영역을 ≥3개로 둘러싸면 단수
@@ -51,21 +52,31 @@ async function computeFormation() {
   const territories = all.rows
   const allyMap = await buildAllianceMap()
 
-  // 1) 인접 그래프 작성 — 모든 쌍을 거리로 검사
+  // 1) 인접 그래프 작성 — 그리드 인덱스로 인접 후보만 검사 (O(N) 평균)
+  //    셀 크기 = 최대 반경 × LINK_DISTANCE_MULT × 2 → 인접 9칸이면 모든 link 후보를 포함.
   const links = []  // [{a, b}]
   const adj = new Map() // territoryId -> [{otherId, friendly, otherUserId}]
   for (const t of territories) adj.set(t.id, [])
 
-  for (let i = 0; i < territories.length; i++) {
-    for (let j = i + 1; j < territories.length; j++) {
-      const a = territories[i], b = territories[j]
-      if (!isLinked(a, b)) continue
-      const friendly = isFriendly(allyMap, a.user_id, b.user_id)
-      links.push({ a: a.id, b: b.id, friendly, aUser: a.user_id, bUser: b.user_id })
-      adj.get(a.id).push({ otherId: b.id, friendly, otherUserId: b.user_id })
-      adj.get(b.id).push({ otherId: a.id, friendly, otherUserId: a.user_id })
-    }
+  let maxRadius = 0
+  for (const t of territories) {
+    const r = parseFloat(t.radius) || 0
+    if (r > maxRadius) maxRadius = r
   }
+  const cellSize = Math.max(200, maxRadius * LINK_DISTANCE_MULT * 2)
+  const idx = buildSpatialIndex(
+    territories,
+    t => ({ lat: parseFloat(t.center_lat), lng: parseFloat(t.center_lng) }),
+    cellSize
+  )
+
+  idx.forEachPair(t => t.id, (a, b) => {
+    if (!isLinked(a, b)) return
+    const friendly = isFriendly(allyMap, a.user_id, b.user_id)
+    links.push({ a: a.id, b: b.id, friendly, aUser: a.user_id, bUser: b.user_id })
+    adj.get(a.id).push({ otherId: b.id, friendly, otherUserId: b.user_id })
+    adj.get(b.id).push({ otherId: a.id, friendly, otherUserId: a.user_id })
+  })
 
   // 2) 각 영역의 단수(atari) 상태 계산
   // 적 영역 t를 둘러싼 (uncloseable) 우호 영역들이 ≥3개면 atari

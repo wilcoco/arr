@@ -1,7 +1,8 @@
 // 레벨 / XP 시스템 (서버 단일 소스)
 const db = require('./db')
+const levelTable = require('./levelTable')
 
-const MAX_LEVEL = 20
+const MAX_LEVEL = levelTable.MAX_LEVEL
 
 // 레벨 N 도달에 누적 필요한 XP (geometric)
 // L1=0, L2=100, L3=400, L5=~3700, L10=~50k, L15=~600k, L20=~7M
@@ -104,7 +105,12 @@ async function getLevelInfo(userId) {
     statBonus: levelStatBonus(level),
     combineRateBonus: combineRateBonus(level),
     storageBonus: storageBonus(level),
-    isMaxLevel: level >= MAX_LEVEL
+    isMaxLevel: level >= MAX_LEVEL,
+    // β 모델 cap (levelTable.js 단일 소스)
+    title: levelTable.titleFor(level),
+    maxRadiusM: levelTable.maxRadiusM(level),
+    maxTotalAreaM2: Math.round(levelTable.maxTotalAreaM2(level)),
+    maxTowerCount: levelTable.maxTowerCount(level)
   }
 }
 

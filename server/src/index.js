@@ -19,6 +19,7 @@ const tutorialRoutes = require('./routes/tutorial');
 const missionsRoutes = require('./routes/missions');
 const bossesRoutes = require('./routes/bosses');
 const towersRoutes = require('./routes/towers');
+const vassalRoutes = require('./routes/vassal');
 const guildsRoutes = require('./routes/guilds');
 const { processTowerSiege, processSiegeExpiry } = require('./routes/towers');
 const { spawnBosses, expireOldBosses } = require('./routes/bosses');
@@ -52,19 +53,14 @@ async function runEconomyTick() {
       WHERE g.user_id = u.id
     `)
 
-    // 2. 영역 유지비 차감 (유저별 전체 영역 유지비 합산)
+    // 2. 영역 유지비 차감 (levelTable.upkeepPerHour와 동일 곡선: 2×(r/100)^1.5)
+    //    100m=2/h, 500m=22/h, 1km=63/h, 5km=707/h, 10km=2000/h
     await db.query(`
       UPDATE users u
       SET energy_currency = GREATEST(0, u.energy_currency - sub.total_cost)
       FROM (
         SELECT user_id,
-          SUM(CASE
-            WHEN radius <= 50  THEN 1
-            WHEN radius <= 100 THEN 3
-            WHEN radius <= 200 THEN 8
-            WHEN radius <= 300 THEN 15
-            ELSE 30
-          END) AS total_cost
+               SUM(GREATEST(1, ROUND(2 * POWER(GREATEST(1, radius) / 100.0, 1.5)))) AS total_cost
         FROM territories
         GROUP BY user_id
       ) sub
@@ -110,6 +106,28 @@ async function runEconomyTick() {
         AND u.energy_currency > 0
         AND t.warning_at IS NOT NULL
     `)
+
+    // 6.4. 속국 조공 분배 — 활성 계약마다 vassal 생산 PRD×0.5의 tribute_pct% 만큼 lord에게 이전
+    let tributeTotal = 0, tributeCount = 0
+    try {
+      const tr = await db.query(`
+        SELECT vc.vassal_user_id, vc.lord_user_id, vc.tribute_to_lord_pct,
+               COALESCE(g.prd, 0) AS prd
+        FROM vassal_contracts vc
+        LEFT JOIN guardians g ON g.user_id = vc.vassal_user_id
+        WHERE vc.status = 'active'
+      `)
+      for (const r of tr.rows) {
+        const amount = Math.floor((parseFloat(r.prd) || 0) * 0.5 * (parseFloat(r.tribute_to_lord_pct) || 0) / 100)
+        if (amount <= 0) continue
+        await db.query(`UPDATE users SET energy_currency = GREATEST(0, energy_currency - $1) WHERE id = $2`,
+          [amount, r.vassal_user_id])
+        await db.query(`UPDATE users SET energy_currency = LEAST(9999, energy_currency + $1) WHERE id = $2`,
+          [amount, r.lord_user_id])
+        tributeTotal += amount
+        tributeCount++
+      }
+    } catch (e) { console.error('[Economy] tribute error:', e.message) }
 
     // 6.5. 모든 수호신 ult_charge 자연 충전 +5/시간 (cap 100)
     await db.query(`UPDATE guardians SET ult_charge = LEAST(100, COALESCE(ult_charge, 0) + 5)`)
@@ -322,7 +340,18 @@ async function runEconomyTick() {
        WHERE status='pending' AND expires_at < NOW() RETURNING id`
     )
 
-    console.log(`[Economy] tick — ${expired.rows.length} expired terr, ${partsDropped} parts(direct), ${partsToStorage} parts(storage), ${energyAuto} energy auto, ${expiredBattles.rows.length} battles + ${expiredAlliances.rows.length} alliances expired, atari[+${atariStarted}/-${atariResolved}/cap${atariCaptures}]`)
+    // 10. 7일 지난 activity_events 청소 (무한 누적 방지)
+    let purgedEvents = 0
+    try {
+      const r = await db.query(
+        `DELETE FROM activity_events WHERE created_at < NOW() - INTERVAL '7 days'`
+      )
+      purgedEvents = r.rowCount || 0
+    } catch (e) {
+      console.error('[Economy] activity_events purge error:', e.message)
+    }
+
+    console.log(`[Economy] tick — ${expired.rows.length} expired terr, ${partsDropped} parts(direct), ${partsToStorage} parts(storage), ${energyAuto} energy auto, tribute ${tributeTotal}/${tributeCount}, ${expiredBattles.rows.length} battles + ${expiredAlliances.rows.length} alliances expired, atari[+${atariStarted}/-${atariResolved}/cap${atariCaptures}], purged ${purgedEvents} old events`)
   } catch (err) {
     console.error('[Economy] tick error:', err.message)
   }
@@ -373,6 +402,7 @@ app.use('/api/tutorial', tutorialRoutes);
 app.use('/api/missions', missionsRoutes);
 app.use('/api/bosses',   bossesRoutes);
 app.use('/api/towers',   towersRoutes);
+app.use('/api/vassal',   vassalRoutes);
 app.use('/api/guilds',   guildsRoutes);
 
 // Health check

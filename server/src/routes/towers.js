@@ -1,6 +1,12 @@
 const express = require('express')
 const router = express.Router()
 const db = require('../db')
+const { buildSpatialIndex } = require('../spatialGrid')
+const levelTable = require('../levelTable')
+
+// Lv5에서 사거리 보정(×1.4) 후의 이론 최대 사거리. 이 값으로 셀을 잡고 인접 9칸만 보면
+// 모든 발사 후보를 포함한다. 새 클래스 추가 시 이 상수 점검 필요.
+const MAX_TOWER_RANGE_M = 250
 
 // 13종 타워 (Piloto Studio TowerDefenseStarterPack 매핑)
 // effect 종류:
@@ -162,92 +168,184 @@ router.get('/classes', (req, res) => {
   res.json({ classes: out })
 })
 
-// POST /api/towers/place — 새 타워 배치
-//   일반: territory 소유자만, 비용 차감, 영역당 최대 3개
-//   grantId: 직접 침투(경로 A) 격파 후 5분 내 무료 건설. 적 영역에 발판(foothold) 설치.
+// POST /api/towers/place — 새 타워 배치 (β 모델: 1 타워 = 1 영역)
+//   body: { userId, lat, lng, towerClass, claimRadiusM, tier?, grantId?, vassalContractId? }
+//   - claimRadiusM 검증: 사용자 레벨 cap, 면적 예산, 타워 개수 cap
+//   - 위치 (lat, lng) 가 다른 영역 안에 있는지 검사:
+//       자기 영역 안 → 자기-속국 (parent_territory_id 자동 설정, 계약 불필요)
+//       남의 영역 안 → vassalContractId 있으면 활성화, grantId 있으면 발판, 둘 다 없으면 거부
+//   - atomic: territories INSERT → fixed_guardians INSERT (territory_id 바인딩) → 비용 차감
 router.post('/place', async (req, res) => {
+  const client = await db.pool.connect().catch(() => null)
+  if (!client) return res.status(500).json({ success: false, error: 'DB 연결 실패' })
+
   try {
-    const { userId, territoryId, towerClass, tier, grantId } = req.body
-    if (!userId || !territoryId || !towerClass) {
-      return res.json({ success: false, error: '필수 파라미터 누락' })
+    await client.query('BEGIN')
+
+    const { userId, towerClass, tier, grantId } = req.body
+    let { lat, lng, claimRadiusM } = req.body
+    if (!userId || !towerClass || lat === undefined || lng === undefined) {
+      await client.query('ROLLBACK')
+      return res.json({ success: false, error: '필수 파라미터 누락 (userId, lat, lng, towerClass)' })
     }
     const cfg = TOWER_CLASSES[towerClass]
-    if (!cfg) return res.json({ success: false, error: '유효하지 않은 타워 클래스' })
+    if (!cfg) {
+      await client.query('ROLLBACK')
+      return res.json({ success: false, error: '유효하지 않은 타워 클래스' })
+    }
+    lat = parseFloat(lat); lng = parseFloat(lng)
+    claimRadiusM = parseInt(claimRadiusM) || levelTable.MIN_RADIUS_M
 
-    const t = await db.query('SELECT * FROM territories WHERE id=$1', [territoryId])
-    if (t.rows.length === 0) return res.json({ success: false, error: '영역 없음' })
+    // 사용자 레벨 / 잔여 자원
+    const uRes = await client.query(
+      'SELECT level, xp, energy_currency FROM users WHERE id=$1', [userId]
+    )
+    if (uRes.rows.length === 0) {
+      await client.query('ROLLBACK')
+      return res.json({ success: false, error: '사용자 없음' })
+    }
+    const userLevel = parseInt(uRes.rows[0].level) || 1
+    const energy = parseInt(uRes.rows[0].energy_currency) || 0
+    const cap = levelTable.maxRadiusM(userLevel)
+    if (claimRadiusM > cap) {
+      await client.query('ROLLBACK')
+      return res.json({ success: false, error: `Lv${userLevel}는 최대 반경 ${cap}m (요청 ${claimRadiusM}m)` })
+    }
+    if (claimRadiusM < levelTable.MIN_RADIUS_M) claimRadiusM = levelTable.MIN_RADIUS_M
 
-    let placeLat = parseFloat(t.rows[0].center_lat)
-    let placeLng = parseFloat(t.rows[0].center_lng)
-    let isFoothold = false
-    let grantRow = null
-
-    if (grantId) {
-      // 발판(foothold) 모드 — 그랜트 검증
-      const g = await db.query(
-        `SELECT * FROM slot_grants
-         WHERE id=$1 AND user_id=$2 AND territory_id=$3
-           AND used_at IS NULL AND expires_at > NOW()`,
-        [grantId, userId, territoryId]
-      )
-      if (g.rows.length === 0) {
-        return res.json({ success: false, error: '유효한 슬롯 권리가 없습니다 (만료/사용됨)' })
-      }
-      grantRow = g.rows[0]
-      placeLat = parseFloat(grantRow.position_lat)
-      placeLng = parseFloat(grantRow.position_lng)
-      isFoothold = true
-    } else {
-      // 일반 모드 — 영역 소유자만
-      if (t.rows[0].user_id !== userId) return res.json({ success: false, error: '소유자 아님' })
+    // 타워 개수 cap
+    const tcountRes = await client.query(
+      'SELECT COUNT(*) AS n FROM territories WHERE user_id=$1', [userId]
+    )
+    const towerCount = parseInt(tcountRes.rows[0].n) || 0
+    const towerCap = levelTable.maxTowerCount(userLevel)
+    if (towerCount >= towerCap) {
+      await client.query('ROLLBACK')
+      return res.json({ success: false, error: `Lv${userLevel} 최대 ${towerCap}개 영역 (현재 ${towerCount}개)` })
     }
 
-    // 영역당 타워 최대 3개 (foothold도 제한 공유)
-    const cnt = await db.query('SELECT COUNT(*) FROM fixed_guardians WHERE territory_id=$1', [territoryId])
-    if (parseInt(cnt.rows[0].count) >= 3) {
-      return res.json({ success: false, error: '영역당 최대 3개 타워' })
+    // 면적 예산
+    const areaRes = await client.query(
+      'SELECT COALESCE(SUM(PI() * radius * radius), 0) AS used FROM territories WHERE user_id=$1', [userId]
+    )
+    const usedArea = parseFloat(areaRes.rows[0].used) || 0
+    const newArea = Math.PI * claimRadiusM * claimRadiusM
+    const budget = levelTable.maxTotalAreaM2(userLevel)
+    if (usedArea + newArea > budget) {
+      await client.query('ROLLBACK')
+      return res.json({
+        success: false,
+        error: `면적 예산 초과 — 사용 ${Math.round(usedArea)}m² + 신규 ${Math.round(newArea)}m² > 예산 ${Math.round(budget)}m²`
+      })
+    }
+
+    // 위치가 다른 영역(자기/남) 안에 있는지 — 가장 가까운 1개만 가져와 판단
+    const inside = await client.query(
+      `SELECT id, user_id, center_lat, center_lng, radius FROM territories
+       WHERE SQRT(POW((center_lat - $1) * 111000, 2) + POW((center_lng - $2) * 88700, 2)) < radius
+       ORDER BY SQRT(POW((center_lat - $1) * 111000, 2) + POW((center_lng - $2) * 88700, 2)) ASC LIMIT 1`,
+      [lat, lng]
+    )
+
+    let parentTerritoryId = null
+    let isFoothold = false
+
+    if (inside.rows.length > 0) {
+      const host = inside.rows[0]
+      const isOwn = host.user_id === userId
+      if (isOwn) {
+        // 자기-속국 — 계약 불필요. 부모 영역만 기록.
+        parentTerritoryId = host.id
+      } else {
+        // 남의 영역 — grant(격파 보상) 만 허용. 속국은 lord-accept로 별도 경로.
+        if (!grantId) {
+          await client.query('ROLLBACK')
+          return res.json({
+            success: false,
+            error: '남의 영역 안입니다. 속국 요청(/api/vassal/propose) 또는 격파 후 발판 사용이 필요합니다',
+            hostTerritoryId: host.id,
+            hostUserId: host.user_id
+          })
+        }
+        const g = await client.query(
+          `SELECT * FROM slot_grants
+           WHERE id=$1 AND user_id=$2 AND territory_id=$3
+             AND used_at IS NULL AND expires_at > NOW()`,
+          [grantId, userId, host.id]
+        )
+        if (g.rows.length === 0) {
+          await client.query('ROLLBACK')
+          return res.json({ success: false, error: '유효한 슬롯 권리가 없습니다 (만료/사용됨)' })
+        }
+        isFoothold = true
+        parentTerritoryId = host.id
+        lat = parseFloat(g.rows[0].position_lat)
+        lng = parseFloat(g.rows[0].position_lng)
+      }
     }
 
     const tierNum = parseInt(tier) || 1
     const stats = towerStats(towerClass, tierNum)
 
-    // 비용 — foothold는 무료, 일반은 차감
+    // 비용 — foothold는 무료(격파로 이미 대가 지불), 일반/자기영역은 차감
+    let costPaid = 0
     if (!isFoothold) {
-      const u = await db.query('SELECT energy_currency FROM users WHERE id=$1', [userId])
-      const energy = parseInt(u.rows[0]?.energy_currency) || 0
-      if (energy < stats.cost) {
-        return res.json({ success: false, error: `에너지 부족 (필요: ${stats.cost}, 보유: ${energy})` })
+      costPaid = levelTable.placementCostEnergy(claimRadiusM, stats.cost)
+      if (energy < costPaid) {
+        await client.query('ROLLBACK')
+        return res.json({ success: false, error: `에너지 부족 (필요: ${costPaid}, 보유: ${energy})` })
       }
-      await db.query('UPDATE users SET energy_currency = energy_currency - $1 WHERE id=$2', [stats.cost, userId])
+      await client.query('UPDATE users SET energy_currency = energy_currency - $1 WHERE id=$2', [costPaid, userId])
     }
 
-    // 타워 삽입
-    const result = await db.query(
+    // territory INSERT (사용자 = 타워 주인. 속국이라도 vassal 본인 소유)
+    const territoryRes = await client.query(
+      `INSERT INTO territories (user_id, center_lat, center_lng, radius, parent_territory_id, tower_type)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [userId, lat, lng, claimRadiusM, parentTerritoryId, towerClass === 'production' ? 'revenue' : 'normal']
+    )
+    const territory = territoryRes.rows[0]
+
+    // tower INSERT (territory_id 바인딩)
+    const towerRes = await client.query(
       `INSERT INTO fixed_guardians (user_id, territory_id, guardian_type, tower_class, tier,
                                      tower_range, fire_rate_ms, atk, def, hp, max_hp,
                                      position_lat, position_lng)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12) RETURNING *`,
-      [userId, territoryId, towerClass === 'production' ? 'production' : 'defense',
+      [userId, territory.id, towerClass === 'production' ? 'production' : 'defense',
        towerClass, tierNum, stats.range, stats.fireRateMs,
        stats.damage, Math.round(stats.damage * 0.5), stats.hp,
-       placeLat, placeLng]
+       lat, lng]
     )
 
     if (isFoothold) {
-      await db.query(`UPDATE slot_grants SET used_at = NOW() WHERE id = $1`, [grantId])
+      await client.query(`UPDATE slot_grants SET used_at = NOW() WHERE id = $1`, [grantId])
     }
 
+    await client.query('COMMIT')
+
     require('./missions').progressMission(userId, 'place_fixed', 1).catch(() => {})
+    require('../levels').gainXp(null, userId, 20, 'tower_place').catch(() => {})
 
     res.json({
       success: true,
-      tower: result.rows[0],
-      cost: isFoothold ? 0 : stats.cost,
+      territory: {
+        id: territory.id,
+        userId: territory.user_id,
+        center: { lat: parseFloat(territory.center_lat), lng: parseFloat(territory.center_lng) },
+        radius: parseInt(territory.radius),
+        parentTerritoryId: territory.parent_territory_id || null
+      },
+      tower: towerRes.rows[0],
+      cost: costPaid,
       foothold: isFoothold
     })
   } catch (e) {
+    try { await client.query('ROLLBACK') } catch {}
     console.error('tower place error', e)
     res.status(500).json({ success: false, error: e.message })
+  } finally {
+    client.release()
   }
 })
 
@@ -347,23 +445,27 @@ async function processTowerSiege() {
   let exchanges = 0, destroyed = 0
   const destroyedIds = new Set()
 
-  for (let i = 0; i < towers.length; i++) {
-    for (let j = 0; j < towers.length; j++) {
-      if (i === j) continue
-      const a = towers[i]   // shooter
-      const b = towers[j]   // target
-      if (destroyedIds.has(a.id) || destroyedIds.has(b.id)) continue
-      if (friendly(a.user_id, b.user_id)) continue
+  // 그리드 인덱스 — 각 슈터(a)는 인접 9칸 안의 적 타워만 후보로 본다.
+  const idx = buildSpatialIndex(
+    towers,
+    t => ({ lat: parseFloat(t.center_lat), lng: parseFloat(t.center_lng) }),
+    MAX_TOWER_RANGE_M
+  )
 
-      const aStats = towerStats(a.tower_class || 'generic', a.tier || 1)
-      if (aStats.damage <= 0 || aStats.range <= 0) continue
+  for (const a of towers) {
+    if (destroyedIds.has(a.id)) continue
+    const aStats = towerStats(a.tower_class || 'generic', a.tier || 1)
+    if (aStats.damage <= 0 || aStats.range <= 0) continue
+    const lastFired = a.last_fired_at ? new Date(a.last_fired_at).getTime() : 0
+    if (Date.now() - lastFired < aStats.fireRateMs) continue
+
+    for (const b of idx.neighbors(parseFloat(a.center_lat), parseFloat(a.center_lng))) {
+      if (a.id === b.id) continue
+      if (destroyedIds.has(b.id)) continue
+      if (friendly(a.user_id, b.user_id)) continue
 
       const d = distMeters(a.center_lat, a.center_lng, b.center_lat, b.center_lng)
       if (d > aStats.range) continue
-
-      // 시간 기반 데미지 (5분 간격으로 fireRate 만큼 발사 가능)
-      const lastFired = a.last_fired_at ? new Date(a.last_fired_at).getTime() : 0
-      if (Date.now() - lastFired < aStats.fireRateMs) continue
 
       // 발사
       const dmg = aStats.damage

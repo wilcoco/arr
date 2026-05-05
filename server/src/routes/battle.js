@@ -925,11 +925,12 @@ router.post('/attack-fixed-guardian', async (req, res) => {
             { byUserId: attackerId, parts: lootParts, energy: lootEnergy })
         }
 
-        // 경로 A 보상 — 5분간 그 자리에 무료 타워 1개 건설 권리(slot_grant)
+        // 경로 A 보상 — 30분간 그 자리에 무료 타워 1개 건설 권리(slot_grant)
+        // (모바일 전환/AR 진입 시간 여유 — 5분은 폰 잠금 풀고 앱 켜면 끝남)
         try {
           const grantRes = await client.query(
             `INSERT INTO slot_grants (user_id, territory_id, position_lat, position_lng, expires_at)
-             VALUES ($1, $2, $3, $4, NOW() + INTERVAL '5 minutes')
+             VALUES ($1, $2, $3, $4, NOW() + INTERVAL '30 minutes')
              RETURNING id, expires_at`,
             [attackerId, targetFG.territory_id, targetFG.position_lat, targetFG.position_lng]
           )

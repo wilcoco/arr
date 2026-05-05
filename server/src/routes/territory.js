@@ -137,130 +137,25 @@ router.get('/debug/nearby-all', async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, error: e.message }) }
 })
 
-// 영역 확장
-router.post('/expand', async (req, res) => {
-  try {
-    const { userId, lat, lng, radius, towerType } = req.body
-
-    // 겹침 방지: 기존 영역과 두 반경의 합보다 가까우면 거절 (자기/남 무관)
-    const overlap = await db.query(
-      `SELECT t.id, t.user_id, u.username,
-              SQRT(POW((t.center_lat - $1) * 111000, 2) +
-                   POW((t.center_lng - $2) * 88700, 2)) AS dist,
-              t.radius
-       FROM territories t LEFT JOIN users u ON t.user_id = u.id
-       WHERE SQRT(POW((t.center_lat - $1) * 111000, 2) +
-                  POW((t.center_lng - $2) * 88700, 2)) < (t.radius + $3)
-       ORDER BY dist ASC LIMIT 1`,
-      [lat, lng, radius]
-    )
-    if (overlap.rows.length > 0) {
-      const o = overlap.rows[0]
-      const isMine = o.user_id === userId
-      const who = isMine ? '내 영역' : `${o.username || '다른 사용자'}의 영역`
-      return res.json({
-        success: false,
-        error: `${who}과 겹칩니다 (${Math.round(o.dist)}m, 반경 ${Math.round(o.radius)}m). 다른 위치로 이동하세요.`,
-        overlapWithMine: isMine,
-        overlapOwner: o.username
-      })
-    }
-
-    const result = await db.query(
-      `INSERT INTO territories (user_id, center_lat, center_lng, radius, tower_type)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [userId, lat, lng, radius, towerType || 'normal']
-    )
-
-    const r0 = result.rows[0]
-    // XP +20, ult_charge +10, 미션 hook
-    const lvResult = await require('../levels').gainXp(null, userId, 20, 'territory_expand').catch(() => null)
-    await db.query(
-      `UPDATE guardians SET ult_charge = LEAST(100, COALESCE(ult_charge,0) + 10) WHERE user_id = $1`,
-      [userId]
-    ).catch(() => {})
-    require('./missions').progressMission(userId, 'territory_expand', 1).catch(() => {})
-    require('./tutorial').autoAdvance(userId, 'expand_first').catch(() => {})
-
-    res.json({
-      success: true,
-      territory: {
-        id: r0.id || '',
-        userId: r0.user_id || '',
-        center: { lat: parseFloat(lat) || 0, lng: parseFloat(lng) || 0 },
-        radius: parseFloat(radius) || 0,
-        vulnerable_until: '',
-        tower_type: r0.tower_type || 'normal'
-      },
-      xpGained: 20,
-      levelUp: lvResult?.leveledUp ? lvResult : null
-    })
-  } catch (err) {
-    console.error('Territory expand error:', err)
-    res.status(500).json({ success: false, error: err.message })
-  }
+// β 모델 변경 — 영역과 타워는 1:1로 통합되었음.
+//   POST /api/territory/expand 와 POST /api/territory/place-guardian 은 폐기.
+//   클라이언트는 POST /api/towers/place 사용 — body: { userId, lat, lng, towerClass, claimRadiusM, tier? }
+router.post('/expand', (req, res) => {
+  res.status(410).json({
+    success: false,
+    deprecated: true,
+    error: 'β 모델로 변경 — POST /api/towers/place 사용. body: { userId, lat, lng, towerClass, claimRadiusM, tier? }',
+    newEndpoint: '/api/towers/place'
+  })
 })
 
-// 고정 수호신 배치
-router.post('/place-guardian', async (req, res) => {
-  try {
-    const { territoryId, userId, lat, lng, stats, guardianType } = req.body
-
-    // 영역당 고정 수호신 최대 3개 제한
-    const fgCount = await db.query(
-      'SELECT COUNT(*) FROM fixed_guardians WHERE territory_id = $1',
-      [territoryId]
-    )
-    if (parseInt(fgCount.rows[0].count) >= 3) {
-      return res.status(400).json({ success: false, error: '영역당 최대 3개까지 배치할 수 있습니다' })
-    }
-
-    // 본체 수호신 능력치 차감
-    const guardian = await db.query(
-      'SELECT * FROM guardians WHERE user_id = $1',
-      [userId]
-    )
-
-    if (guardian.rows.length === 0) {
-      return res.status(400).json({ success: false, error: '수호신이 없습니다' })
-    }
-
-    const g = guardian.rows[0]
-
-    // 능력치 분배 가능 확인
-    if (g.atk < stats.atk || g.def < stats.def || g.hp < stats.hp) {
-      return res.status(400).json({ success: false, error: '능력치가 부족합니다' })
-    }
-
-    // 본체 능력치 차감
-    await db.query(
-      `UPDATE guardians SET atk = atk - $1, def = def - $2, hp = hp - $3
-       WHERE user_id = $4`,
-      [stats.atk, stats.def, stats.hp, userId]
-    )
-
-    // 고정 수호신 생성
-    const result = await db.query(
-      `INSERT INTO fixed_guardians (territory_id, user_id, position_lat, position_lng, atk, def, hp, guardian_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING *`,
-      [territoryId, userId, lat, lng, stats.atk, stats.def, stats.hp, guardianType || 'defense']
-    )
-
-    res.json({
-      success: true,
-      fixedGuardian: {
-        id: result.rows[0].id,
-        position: { lat, lng },
-        stats,
-        type: guardianType
-      }
-    })
-  } catch (err) {
-    console.error('Place guardian error:', err)
-    res.status(500).json({ success: false, error: err.message })
-  }
+router.post('/place-guardian', (req, res) => {
+  res.status(410).json({
+    success: false,
+    deprecated: true,
+    error: 'β 모델로 변경 — 영역과 타워는 1:1. POST /api/towers/place 사용.',
+    newEndpoint: '/api/towers/place'
+  })
 })
 
 // 주변 영역 조회 (침입 감지용)
