@@ -803,20 +803,28 @@ export default function App() {
           />
         )}
 
-        {/* 내 영역들 — 클릭 시 타워 배치 모달 */}
-        {territories.map(t => (
-          <Circle
-            key={t.id}
-            center={[t.center.lat, t.center.lng]}
-            radius={t.radius}
-            eventHandlers={{ click: () => setShowTowerModal(t.id) }}
-            pathOptions={{
-              color: '#00ff88',
-              fillColor: '#00ff88',
-              fillOpacity: 0.2
-            }}
-          />
-        ))}
+        {/* 내 영역들 — 클릭 시 타워 배치 모달.
+            warning_at 있으면 노란색(자원 경고), weakened_at 있으면 빨간 점선(약화) — P2-9 */}
+        {territories.map(t => {
+          const warned = !!t.warning_at
+          const weakened = !!t.weakened_at
+          const color = weakened ? '#ff4444' : warned ? '#ffaa00' : '#00ff88'
+          return (
+            <Circle
+              key={t.id}
+              center={[t.center.lat, t.center.lng]}
+              radius={t.radius}
+              eventHandlers={{ click: () => setShowTowerModal(t.id) }}
+              pathOptions={{
+                color,
+                fillColor: color,
+                fillOpacity: weakened ? 0.35 : 0.2,
+                weight: warned ? 3 : 1,
+                dashArray: weakened ? '5, 5' : undefined
+              }}
+            />
+          )
+        })}
 
         {/* 다른 플레이어 영역들 */}
         {nearbyTerritories.map(t => (

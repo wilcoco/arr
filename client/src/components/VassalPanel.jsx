@@ -93,7 +93,11 @@ export default function VassalPanel({ onClose }) {
                     ? <>👇 나는 <b>{c.lordName}</b>의 속국</>
                     : <>👆 <b>{c.vassalName}</b>가 내 속국</>}
                 </div>
-                <div style={styles.meta}>조공 {c.tributeToLordPct}%</div>
+                <div style={styles.meta}>
+                  조공률 {c.tributeToLordPct}% ·
+                  누적 <b style={{ color: '#ffd700' }}>{c.tributeTotal || 0} E</b>
+                  {c.role === 'vassal' ? ' 지불' : ' 수령'}
+                </div>
                 <button onClick={() => dissolveVassal(c.contractId)} style={styles.rejectBtn}>해제</button>
               </div>
             ))}
@@ -129,12 +133,23 @@ export default function VassalPanel({ onClose }) {
                   value={proposeRadius} onChange={e => setProposeRadius(Number(e.target.value))}
                   style={styles.slider} />
 
-                <div style={styles.label}>조공률: {proposeTribute}%</div>
+                <div style={styles.label}>
+                  조공률: <b style={{
+                    color: proposeTribute < 20 ? '#ff8888' : proposeTribute > 60 ? '#ffd700' : '#00ff88'
+                  }}>{proposeTribute}%</b>
+                  <span style={{ fontSize: 10, color: '#888', marginLeft: 6 }}>
+                    {proposeTribute < 20 && '— 거절 가능성↑'}
+                    {proposeTribute >= 20 && proposeTribute <= 40 && '— 표준 (권장)'}
+                    {proposeTribute > 40 && proposeTribute <= 60 && '— 후한 편'}
+                    {proposeTribute > 60 && '— 매우 후함, 영주 우대'}
+                  </span>
+                </div>
                 <input type="range" min="0" max="100"
                   value={proposeTribute} onChange={e => setProposeTribute(Number(e.target.value))}
                   style={styles.slider} />
                 <div style={{ fontSize: 11, color: '#aaa', marginBottom: 8 }}>
                   내 시간당 생산의 {proposeTribute}%가 영주에게 자동 이전됩니다.
+                  대가로 영주의 보호(같은 영역 내 적 자동 협공)와 안정 점유.
                 </div>
 
                 <div style={styles.label}>타워 클래스:</div>

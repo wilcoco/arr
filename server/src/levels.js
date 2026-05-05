@@ -110,7 +110,9 @@ async function getLevelInfo(userId) {
     title: levelTable.titleFor(level),
     maxRadiusM: levelTable.maxRadiusM(level),
     maxTotalAreaM2: Math.round(levelTable.maxTotalAreaM2(level)),
-    maxTowerCount: levelTable.maxTowerCount(level)
+    maxTowerCount: levelTable.maxTowerCount(level),
+    energyCap: levelTable.energyCapFor(level),
+    unlockedClasses: levelTable.unlockedClassesFor(level)
   }
 }
 

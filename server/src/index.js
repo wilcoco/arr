@@ -45,10 +45,12 @@ function maintenanceCost(radius) {
 async function runEconomyTick() {
   console.log('[Economy] tick started', new Date().toISOString())
   try {
-    // 1. 모든 유저의 에너지 생산 (본체 PRD × 0.5)
+    // 1. 모든 유저의 에너지 생산 (본체 PRD × 0.5).
+    //    cap = 5000 + level × 1000 (Lv1=6000, Lv30=35000) — levelTable.energyCapFor와 동일.
     await db.query(`
       UPDATE users u
-      SET energy_currency = LEAST(9999, u.energy_currency + FLOOR(COALESCE(g.prd, 0) * 0.5))
+      SET energy_currency = LEAST(5000 + COALESCE(u.level, 1) * 1000,
+                                   u.energy_currency + FLOOR(COALESCE(g.prd, 0) * 0.5))
       FROM guardians g
       WHERE g.user_id = u.id
     `)
@@ -111,7 +113,7 @@ async function runEconomyTick() {
     let tributeTotal = 0, tributeCount = 0
     try {
       const tr = await db.query(`
-        SELECT vc.vassal_user_id, vc.lord_user_id, vc.tribute_to_lord_pct,
+        SELECT vc.id AS contract_id, vc.vassal_user_id, vc.lord_user_id, vc.tribute_to_lord_pct,
                COALESCE(g.prd, 0) AS prd
         FROM vassal_contracts vc
         LEFT JOIN guardians g ON g.user_id = vc.vassal_user_id
@@ -122,8 +124,13 @@ async function runEconomyTick() {
         if (amount <= 0) continue
         await db.query(`UPDATE users SET energy_currency = GREATEST(0, energy_currency - $1) WHERE id = $2`,
           [amount, r.vassal_user_id])
-        await db.query(`UPDATE users SET energy_currency = LEAST(9999, energy_currency + $1) WHERE id = $2`,
+        await db.query(
+          `UPDATE users SET energy_currency = LEAST(5000 + COALESCE(level, 1) * 1000, energy_currency + $1) WHERE id = $2`,
           [amount, r.lord_user_id])
+        // 누적 조공 (P2-8) — UI에서 양측이 누적량 확인 가능
+        await db.query(
+          `UPDATE vassal_contracts SET tribute_total = COALESCE(tribute_total, 0) + $1 WHERE id = $2`,
+          [amount, r.contract_id])
         tributeTotal += amount
         tributeCount++
       }

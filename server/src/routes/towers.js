@@ -8,6 +8,52 @@ const levelTable = require('../levelTable')
 // 모든 발사 후보를 포함한다. 새 클래스 추가 시 이 상수 점검 필요.
 const MAX_TOWER_RANGE_M = 250
 
+// 신규 유저 첫 영역 옆에 NPC 봇 1개 자동 spawn — N=10 환경에서 PvP 콘텐츠 보장.
+// NPC 유저는 username 'NPC_starter_<n>' 형식. battle은 일반 유저처럼 작동.
+async function spawnStarterNpc(spawnerUserId, spawnerLat, spawnerLng) {
+  const db = require('../db')
+  // 200m 떨어진 무작위 방향
+  const angle = Math.random() * 2 * Math.PI
+  const dLat = (200 * Math.cos(angle)) / 111000
+  const cosLat = Math.max(0.1, Math.cos(spawnerLat * Math.PI / 180))
+  const dLng = (200 * Math.sin(angle)) / (111000 * cosLat)
+  const npcLat = spawnerLat + dLat
+  const npcLng = spawnerLng + dLng
+
+  // NPC 유저 생성 (username unique)
+  const npcName = 'NPC_' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 1000)
+  const u = await db.query(
+    `INSERT INTO users (username, energy_currency, level, xp, user_layer)
+     VALUES ($1, 1000, 1, 0, 'beginner') RETURNING id`,
+    [npcName]
+  )
+  const npcId = u.rows[0].id
+
+  // 본체 수호신 (낮은 스탯)
+  await db.query(
+    `INSERT INTO guardians (user_id, type, atk, def, hp, abs, prd, spd, rng, ter)
+     VALUES ($1, 'animal', 30, 30, 100, 5, 20, 10, 30, 30)`,
+    [npcId]
+  )
+
+  // territory + tower 1세트 (generic, 100m)
+  const stats = towerStats('generic', 1)
+  const t = await db.query(
+    `INSERT INTO territories (user_id, center_lat, center_lng, radius, tower_type)
+     VALUES ($1, $2, $3, 100, 'normal') RETURNING id`,
+    [npcId, npcLat, npcLng]
+  )
+  await db.query(
+    `INSERT INTO fixed_guardians (user_id, territory_id, guardian_type, tower_class, tier,
+                                   tower_range, fire_rate_ms, atk, def, hp, max_hp,
+                                   position_lat, position_lng)
+     VALUES ($1, $2, 'defense', 'generic', 1, $3, $4, $5, $6, $7, $7, $8, $9)`,
+    [npcId, t.rows[0].id, stats.range, stats.fireRateMs,
+     stats.damage, Math.round(stats.damage * 0.5), stats.hp, npcLat, npcLng]
+  )
+  return { npcId, lat: npcLat, lng: npcLng }
+}
+
 // 13종 타워 (Piloto Studio TowerDefenseStarterPack 매핑)
 // effect 종류:
 //   aoe         : 폭발 반경(m) 내 모두 데미지
@@ -323,6 +369,11 @@ router.post('/place', async (req, res) => {
     }
 
     await client.query('COMMIT')
+
+    // 신규 유저 첫 영역이면 NPC 봇 영역 1개를 200m 떨어진 곳에 자동 spawn → PvP 콘텐츠 보장
+    if (towerCount === 0) {
+      try { await spawnStarterNpc(userId, lat, lng) } catch (e) { console.error('starter NPC spawn:', e.message) }
+    }
 
     require('./missions').progressMission(userId, 'place_fixed', 1).catch(() => {})
     require('../levels').gainXp(null, userId, 20, 'tower_place').catch(() => {})

@@ -178,7 +178,8 @@ async function ensureSchema() {
       proposed_at TIMESTAMP DEFAULT NOW(),
       responded_at TIMESTAMP,
       expires_at TIMESTAMP DEFAULT (NOW() + INTERVAL '24 hours'),
-      dissolved_at TIMESTAMP
+      dissolved_at TIMESTAMP,
+      tribute_total INT DEFAULT 0   -- 누적 조공량 (P2-8)
     )
   `)
   await db.query(`CREATE INDEX IF NOT EXISTS idx_vassal_lord ON vassal_contracts(lord_user_id, status)`)

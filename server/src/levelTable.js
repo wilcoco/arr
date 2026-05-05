@@ -50,13 +50,42 @@ function upkeepPerHour(radiusM) {
   return Math.max(1, Math.round(2 * Math.pow(r / 100, 1.5)))
 }
 
-// 타워 배치 비용 (에너지) — 클래스 비용 + 면적 비용
-//   100m=클래스+31, 500m=+785, 1km=+3141, 10km=+314159 (Lv30이 ABS 영역 잡으려면 30만 에너지)
+// 타워 배치 비용 (에너지) — 클래스 비용 + 반경 비용
+//   곡선: 30×√r. 100m=300, 500m=671, 1km=948, 5km=2121, 10km=3000
+//   (이전: 면적 비례라 10km=314k였음 — 에너지 cap을 영원히 못 채우는 데드락 → 완화)
+//   대형 영역의 부담은 유지비(2×(r/100)^1.5) 가 담당.
 function placementCostEnergy(radiusM, towerClassCost) {
   const r = Math.max(MIN_RADIUS_M, parseFloat(radiusM) || MIN_RADIUS_M)
-  const area = Math.PI * r * r
-  const areaCost = Math.round(area / 1000)
-  return Math.max(1, (parseInt(towerClassCost) || 0) + areaCost)
+  const radiusCost = Math.round(30 * Math.sqrt(r))
+  return Math.max(1, (parseInt(towerClassCost) || 0) + radiusCost)
+}
+
+// 에너지 보유 한도 — 레벨 비례. Lv1=6000, Lv10=15000, Lv30=35000
+//   이전: 9999 하드코딩 → 고레벨 placementCost 충당 불가능했음
+function energyCapFor(level) {
+  const lv = clampLevel(level)
+  return 5000 + lv * 1000
+}
+
+// 타워 클래스 해금 — 레벨에 따라 점진적으로 노출.
+//   Lv1: generic만. Lv3+: balista/assault. Lv5+: cannon/fire. Lv8+: ice/aqua/venom.
+//   Lv12+: electric/scifi. Lv16+: nature/arcane/crystal. (전체 13종)
+//   신규 유저 클래스 마비 방지.
+const CLASS_UNLOCK = [
+  { lv: 1,  classes: ['generic'] },
+  { lv: 3,  classes: ['balista', 'assault'] },
+  { lv: 5,  classes: ['cannon', 'fire'] },
+  { lv: 8,  classes: ['ice', 'aqua', 'venom'] },
+  { lv: 12, classes: ['electric', 'scifi'] },
+  { lv: 16, classes: ['nature', 'arcane', 'crystal'] }
+]
+function unlockedClassesFor(level) {
+  const lv = clampLevel(level)
+  const out = []
+  for (const tier of CLASS_UNLOCK) {
+    if (lv >= tier.lv) out.push(...tier.classes)
+  }
+  return out
 }
 
 const TITLES = [
@@ -86,6 +115,7 @@ function levelInfo(level) {
 module.exports = {
   MAX_LEVEL, MIN_RADIUS_M, ABS_MAX_RADIUS_M,
   clampLevel, maxRadiusM, maxTotalAreaM2, maxTowerCount,
-  defenseCoef, upkeepPerHour, placementCostEnergy,
+  defenseCoef, upkeepPerHour, placementCostEnergy, energyCapFor,
+  unlockedClassesFor, CLASS_UNLOCK,
   titleFor, levelInfo
 }

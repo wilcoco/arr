@@ -28,7 +28,26 @@ export default function TerritoryControls() {
   if (!guardian) return null
 
   const maxRadius = level?.maxRadiusM || 500
-  const classKeys = towerClasses ? Object.keys(towerClasses) : ['generic']
+  // Lv별 해금된 클래스만 노출 (신규 유저 클래스 마비 방지). level.unlockedClasses는 서버에서 옴.
+  const unlocked = level?.unlockedClasses || ['generic']
+  const classKeys = towerClasses
+    ? Object.keys(towerClasses).filter(k => unlocked.includes(k))
+    : ['generic']
+
+  // 방어계수 (levelTable.defenseCoef와 동일 공식): min(1.0, 100/r)
+  const defenseCoef = expandingTerritory
+    ? Math.min(1.0, 100 / Math.max(1, expandingTerritory.radius))
+    : 1.0
+  // 유지비 (levelTable.upkeepPerHour): 2×(r/100)^1.5
+  const upkeepPerHour = expandingTerritory
+    ? Math.max(1, Math.round(2 * Math.pow(expandingTerritory.radius / 100, 1.5)))
+    : 0
+  // 배치 비용: 30×√r + classCost
+  const placementCost = expandingTerritory && towerClasses?.[selectedTowerClass]
+    ? Math.round(30 * Math.sqrt(Math.max(50, expandingTerritory.radius))) + (towerClasses[selectedTowerClass].cost || 0)
+    : 0
+  const guardianPrd = guardian?.stats?.prd || 0
+  const hourlyNet = Math.floor(guardianPrd * 0.5) - upkeepPerHour
 
   const handlePlaceGuardian = async () => {
     if (!userLocation) { alert('위치 정보 없음'); return }
@@ -66,6 +85,7 @@ export default function TerritoryControls() {
 
   if (expandingTerritory) {
     const cls = towerClasses?.[selectedTowerClass]
+    const defGauge = Math.round(defenseCoef * 5)  // 0~5 칸
     return (
       <div style={styles.panel}>
         <h4 style={{ marginBottom: 12 }}>새 영역(타워) 건설</h4>
@@ -78,14 +98,58 @@ export default function TerritoryControls() {
           onChange={(e) => updateTerritoryRadius(Number(e.target.value))}
           style={styles.slider}
         />
+
+        {/* 방어계수 게이지 — 큰 영역은 약함 */}
+        <div style={styles.metric}>
+          <span>방어력</span>
+          <span style={styles.gauge}>
+            {[1,2,3,4,5].map(i => (
+              <span key={i} style={{
+                ...styles.gaugeBar,
+                background: i <= defGauge ? '#00ff88' : '#333'
+              }}/>
+            ))}
+          </span>
+          <span style={styles.metricVal}>×{defenseCoef.toFixed(2)}</span>
+        </div>
+
+        {/* 유지비/생산 수지 — 적자면 빨간색 */}
+        <div style={styles.metric}>
+          <span>시간당</span>
+          <span style={{
+            ...styles.metricVal, marginLeft: 'auto',
+            color: hourlyNet >= 0 ? '#00ff88' : '#ff6666'
+          }}>
+            +{Math.floor(guardianPrd * 0.5)} − {upkeepPerHour} = {hourlyNet >= 0 ? '+' : ''}{hourlyNet} E
+          </span>
+        </div>
+        {hourlyNet < 0 && (
+          <div style={styles.warn}>
+            ⚠ 적자 영역 — 자원 고갈 시 12h 후 약화, 48h 후 소멸. 수익형 보스/전투로 보충 필요.
+          </div>
+        )}
+
         <ClassPicker classKeys={classKeys} towerClasses={towerClasses}
                      selected={selectedTowerClass} onPick={setSelectedTowerClass} />
+
+        {/* 잠긴 클래스 힌트 */}
+        {classKeys.length < 13 && (
+          <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+            🔒 {13 - classKeys.length}종 잠김 (Lv 올리면 해금)
+          </div>
+        )}
+
         {cls && (
           <div style={styles.classInfo}>
             {cls.label} · ATK {cls.baseDmg} · HP {cls.baseHp} · 사거리 {cls.range}m
             {cls.desc && <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>{cls.desc}</div>}
           </div>
         )}
+
+        <div style={styles.costBar}>
+          건설 비용: <b style={{ color: '#ffd700' }}>{placementCost} E</b>
+        </div>
+
         <div style={styles.buttons}>
           <button onClick={() => confirmTerritory()} style={styles.confirmBtn}>건설</button>
           <button
@@ -181,5 +245,20 @@ const styles = {
   classInfo: {
     background: 'rgba(255,255,255,0.05)', padding: '8px 10px', borderRadius: 6,
     fontSize: 12, marginTop: 4
+  },
+  metric: {
+    display: 'flex', alignItems: 'center', gap: 6,
+    fontSize: 12, marginBottom: 4
+  },
+  metricVal: { marginLeft: 'auto', fontWeight: 'bold' },
+  gauge: { display: 'inline-flex', gap: 2 },
+  gaugeBar: { width: 12, height: 8, borderRadius: 2 },
+  warn: {
+    background: 'rgba(255, 102, 102, 0.15)', color: '#ffaaaa',
+    padding: '6px 8px', borderRadius: 6, fontSize: 11, marginBottom: 6
+  },
+  costBar: {
+    textAlign: 'center', padding: '6px', marginTop: 6,
+    background: 'rgba(255,255,255,0.05)', borderRadius: 4, fontSize: 13
   }
 }

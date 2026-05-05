@@ -353,6 +353,7 @@ router.get('/my/:userId', async (req, res) => {
         lordTerritoryId: c.lord_territory_id,
         vassalTerritoryId: c.vassal_territory_id,
         tributeToLordPct: parseFloat(c.tribute_to_lord_pct),
+        tributeTotal: parseInt(c.tribute_total) || 0,
         establishedAt: c.responded_at
       }))
     })

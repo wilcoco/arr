@@ -220,7 +220,11 @@ router.get('/my/:userId', async (req, res) => {
         center: { lat: fnum(t.center_lat), lng: fnum(t.center_lng) },
         radius: fnum(t.radius),
         vulnerable_until: t.vulnerable_until ? new Date(t.vulnerable_until).toISOString() : '',
-        tower_type: t.tower_type || 'normal'
+        tower_type: t.tower_type || 'normal',
+        // P2-9: 자원 고갈 단계 + 약화 카운트다운
+        warning_at: t.warning_at ? new Date(t.warning_at).toISOString() : '',
+        weakened_at: t.weakened_at ? new Date(t.weakened_at).toISOString() : '',
+        parent_territory_id: t.parent_territory_id || null
       })),
       fixedGuardians: fixedGuardians.rows.map(fg => ({
         id: fg.id || '',
