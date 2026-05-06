@@ -162,22 +162,37 @@ router.post('/place-guardian', (req, res) => {
   })
 })
 
-// 주변 영역 조회 (침입 감지용)
+// 주변 영역 조회 (침입 감지용 + 다른 플레이어 영역 표시)
+//   BUG FIX (2026-05-06): 이전엔 lat/lng/radius 받았지만 WHERE에서 무시 → 단순 LIMIT 20.
+//   GPS 가시성을 보장하려면 실제 거리 필터 + center 거리 정렬 필요.
 router.get('/nearby', async (req, res) => {
   try {
-    const { lat, lng, radius, excludeUserId } = req.query
+    const lat = parseFloat(req.query.lat)
+    const lng = parseFloat(req.query.lng)
+    const reqRadius = parseFloat(req.query.radius || 1000)  // m
+    const { excludeUserId } = req.query
 
-    if (!lat || !lng || !excludeUserId) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !excludeUserId) {
       return res.json({ territories: [] })
     }
 
+    // 영역 자체 반경(최대 10km)도 고려해 검색 박스 확장
+    const SEARCH_BOX_M = Math.max(reqRadius, 1000) + 1000  // 영역 외곽까지 닿는 후보
+    const b = boxParams(lat, lng, SEARCH_BOX_M)
     const result = await db.query(
-      `SELECT t.*, u.username
+      `SELECT t.*, u.username,
+              SQRT(POW((t.center_lat - $2) * 111000, 2) +
+                   POW((t.center_lng - $3) * 88700, 2)) AS dist_m
        FROM territories t
        JOIN users u ON t.user_id = u.id
        WHERE t.user_id::text != $1
-       LIMIT 20`,
-      [excludeUserId]
+         AND t.center_lat BETWEEN $4 AND $5
+         AND t.center_lng BETWEEN $6 AND $7
+         AND SQRT(POW((t.center_lat - $2) * 111000, 2) +
+                  POW((t.center_lng - $3) * 88700, 2)) < (t.radius + $8)
+       ORDER BY dist_m ASC
+       LIMIT 50`,
+      [excludeUserId, lat, lng, b.latMin, b.latMax, b.lngMin, b.lngMax, reqRadius]
     )
 
     const fnum = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d }
@@ -191,7 +206,9 @@ router.get('/nearby', async (req, res) => {
         vulnerable_until: t.vulnerable_until ? new Date(t.vulnerable_until).toISOString() : '',
         tower_type: t.tower_type || 'normal',
         atari_started_at: t.atari_started_at ? new Date(t.atari_started_at).toISOString() : '',
-        in_eye_zone: !!t.in_eye_zone
+        in_eye_zone: !!t.in_eye_zone,
+        defense_penalty: fnum(t.defense_penalty, 1.0),
+        distMeters: Math.round(fnum(t.dist_m))
       }))
     })
   } catch (err) {
@@ -292,26 +309,34 @@ router.post('/check-intrusion', async (req, res) => {
   }
 })
 
-// 주변 고정 수호신 조회
+// 주변 고정 수호신 조회 — BUG FIX (2026-05-06): 실제 거리 필터 적용
 router.get('/nearby-fixed-guardians', async (req, res) => {
   try {
-    const { lat, lng, radius, excludeUserId } = req.query
+    const lat = parseFloat(req.query.lat)
+    const lng = parseFloat(req.query.lng)
+    const reqRadius = parseFloat(req.query.radius || 1000)
+    const { excludeUserId } = req.query
 
-    // 파라미터 검증
-    if (!lat || !lng || !excludeUserId) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !excludeUserId) {
       return res.json({ fixedGuardians: [] })
     }
 
-    const degreeRadius = parseFloat(radius || 1000) / 111000
-
+    const b = boxParams(lat, lng, reqRadius)
     const result = await db.query(
-      `SELECT fg.*, u.username, t.center_lat, t.center_lng, t.radius as territory_radius
+      `SELECT fg.*, u.username, t.center_lat, t.center_lng, t.radius as territory_radius,
+              SQRT(POW((fg.position_lat - $2) * 111000, 2) +
+                   POW((fg.position_lng - $3) * 88700, 2)) AS dist_m
        FROM fixed_guardians fg
        JOIN users u ON fg.user_id = u.id
        JOIN territories t ON fg.territory_id = t.id
        WHERE fg.user_id::text != $1
+         AND fg.position_lat BETWEEN $4 AND $5
+         AND fg.position_lng BETWEEN $6 AND $7
+         AND SQRT(POW((fg.position_lat - $2) * 111000, 2) +
+                  POW((fg.position_lng - $3) * 88700, 2)) < $8
+       ORDER BY dist_m ASC
        LIMIT 50`,
-      [excludeUserId || '']
+      [excludeUserId, lat, lng, b.latMin, b.latMax, b.lngMin, b.lngMax, reqRadius]
     )
 
     const num = (v, d = 0) => { const n = parseInt(v); return Number.isFinite(n) ? n : d }
