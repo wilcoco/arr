@@ -17,7 +17,9 @@ router.post('/create', async (req, res) => {
     if (userResult.rows.length === 0) {
       // 새 사용자 생성
       const newUser = await db.query(
-        'INSERT INTO users (username, energy_currency) VALUES ($1, 100) RETURNING id',
+        // 신규 가입 시작 에너지 1500 — Lv1 generic 50m 타워 1개(242E) + 두 번째 100m 약간 여유
+        // (이전 100은 첫 타워조차 못 짓는 데드락 → 신규 유저 즉시 이탈)
+        'INSERT INTO users (username, energy_currency) VALUES ($1, 1500) RETURNING id',
         [visitorId]
       )
       userId = newUser.rows[0].id

@@ -61,7 +61,7 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       username VARCHAR(100) UNIQUE NOT NULL,
-      energy_currency INT DEFAULT 100,
+      energy_currency INT DEFAULT 1500,
       level INT DEFAULT 1,
       xp INT DEFAULT 0,
       last_xp_event_at TIMESTAMP,

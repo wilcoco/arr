@@ -10,7 +10,7 @@ CREATE TABLE users (
   last_location GEOGRAPHY(POINT, 4326),
   is_online BOOLEAN DEFAULT FALSE,
   shield_until TIMESTAMP, -- 방어막 종료 시간
-  energy_currency INT DEFAULT 100
+  energy_currency INT DEFAULT 1500  -- Lv1 generic 50m 타워(242E) 1~2개 가능
 );
 
 -- 수호신 테이블 (본체)
