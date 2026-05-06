@@ -2,6 +2,26 @@ const express = require('express')
 const router = express.Router()
 const db = require('../db')
 
+// 디버그: 본인 계정 에너지 충전 — 베타 데드락 해소용. secret 검증.
+//   POST /api/guardian/debug-energy { visitorId, secret, amount? }
+router.post('/debug-energy', async (req, res) => {
+  try {
+    const { visitorId, secret } = req.body
+    const amount = parseInt(req.body.amount) || 5000
+    if (secret !== 'guardian-test') {
+      return res.status(403).json({ success: false, error: 'forbidden' })
+    }
+    if (!visitorId) return res.json({ success: false, error: 'visitorId 필수' })
+    const r = await db.query(
+      `UPDATE users SET energy_currency = GREATEST(energy_currency, $1)
+       WHERE username = $2 RETURNING id, energy_currency`,
+      [Math.min(amount, 35000), visitorId]
+    )
+    if (r.rows.length === 0) return res.json({ success: false, error: '사용자 없음' })
+    res.json({ success: true, energy: r.rows[0].energy_currency })
+  } catch (e) { res.status(500).json({ success: false, error: e.message }) }
+})
+
 // 수호신 생성
 router.post('/create', async (req, res) => {
   try {

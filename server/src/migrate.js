@@ -34,6 +34,18 @@ async function migrate() {
       console.log(`[migrate] energy_boost_1500: ${r.rowCount} users boosted to 1500E`)
     }
 
+    // 2차 boost — 첫 boost 조건이 < 500이라 500~1499 사이 사용자가 누락. 모두 ≥1500 보장.
+    const boost2Done = await db.query(`SELECT name FROM _migrations WHERE name = 'energy_min_1500_all_2026_05_06'`)
+    if (boost2Done.rows.length === 0) {
+      const r = await db.query(
+        `UPDATE users SET energy_currency = 1500
+         WHERE energy_currency < 1500 AND username NOT LIKE 'NPC_%'
+         RETURNING id`
+      )
+      await db.query(`INSERT INTO _migrations (name) VALUES ('energy_min_1500_all_2026_05_06')`)
+      console.log(`[migrate] energy_min_1500_all: ${r.rowCount} users boosted to ≥1500E`)
+    }
+
     console.log('[migrate] complete.')
   } catch (err) {
     console.error('[migrate] failed:', err)
