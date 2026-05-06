@@ -46,6 +46,31 @@ async function migrate() {
       console.log(`[migrate] energy_min_1500_all: ${r.rowCount} users boosted to ≥1500E`)
     }
 
+    // R) 베타 테스트 — 모든 사용자 풍부한 자원으로 boost (1회만)
+    //   energy ≥5000, level ≥3, guardian 스탯 2배 (cap 미만일 때만)
+    const boostBetaDone = await db.query(`SELECT name FROM _migrations WHERE name = 'beta_full_boost_2026_05_06'`)
+    if (boostBetaDone.rows.length === 0) {
+      const u = await db.query(
+        `UPDATE users
+         SET energy_currency = GREATEST(energy_currency, 5000),
+             level = GREATEST(COALESCE(level, 1), 3),
+             xp = GREATEST(COALESCE(xp, 0), 200)
+         WHERE username NOT LIKE 'NPC_%'
+         RETURNING id`
+      )
+      // guardians 스탯도 cap 내에서 풍부하게 (이미 캡 가까우면 유지)
+      const g = await db.query(
+        `UPDATE guardians SET
+           atk = GREATEST(atk, 60), def = GREATEST(def, 50), hp = GREATEST(hp, 400),
+           abs = GREATEST(abs, 30), prd = GREATEST(prd, 60), spd = GREATEST(spd, 30),
+           rng = GREATEST(rng, 30), ter = GREATEST(ter, 30)
+         WHERE user_id IN (SELECT id FROM users WHERE username NOT LIKE 'NPC_%')
+         RETURNING id`
+      )
+      await db.query(`INSERT INTO _migrations (name) VALUES ('beta_full_boost_2026_05_06')`)
+      console.log(`[migrate] beta_full_boost: ${u.rowCount} users + ${g.rowCount} guardians boosted`)
+    }
+
     console.log('[migrate] complete.')
   } catch (err) {
     console.error('[migrate] failed:', err)
@@ -86,7 +111,7 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       username VARCHAR(100) UNIQUE NOT NULL,
-      energy_currency INT DEFAULT 1500,
+      energy_currency INT DEFAULT 5000,
       level INT DEFAULT 1,
       xp INT DEFAULT 0,
       last_xp_event_at TIMESTAMP,
