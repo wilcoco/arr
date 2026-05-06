@@ -21,6 +21,19 @@ async function migrate() {
       console.log('[migrate] v2_beta_redesign already applied — skipping wipe, only running idempotent forward-compat ALTERs.')
       await ensureSchema()
     }
+
+    // 1회성 — 데드락 피해자 에너지 보충 (placement 비용 30√r 도입 후 신규 100E로는 첫 타워 불가능)
+    const boostDone = await db.query(`SELECT name FROM _migrations WHERE name = 'energy_boost_1500_2026_05_06'`)
+    if (boostDone.rows.length === 0) {
+      const r = await db.query(
+        `UPDATE users SET energy_currency = 1500
+         WHERE energy_currency < 500 AND username NOT LIKE 'NPC_%'
+         RETURNING id`
+      )
+      await db.query(`INSERT INTO _migrations (name) VALUES ('energy_boost_1500_2026_05_06')`)
+      console.log(`[migrate] energy_boost_1500: ${r.rowCount} users boosted to 1500E`)
+    }
+
     console.log('[migrate] complete.')
   } catch (err) {
     console.error('[migrate] failed:', err)
