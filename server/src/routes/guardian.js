@@ -167,6 +167,26 @@ router.get('/:visitorId', async (req, res) => {
   try {
     const { visitorId } = req.params
 
+    // 베타 자동 안전판 — 사용자 데이터 로드 시 에너지/레벨이 너무 낮으면 자동 보충.
+    //   v3 마이그레이션 이후 가입했거나 어떤 이유로 누락된 사용자도 다음 GET 한 번에 12000E 회복.
+    //   NPC 제외. 운영 시에는 이 블록을 환경변수로 토글하거나 제거할 것.
+    if (visitorId && !visitorId.startsWith('NPC_')) {
+      try {
+        await db.query(
+          `UPDATE users SET
+             energy_currency = GREATEST(energy_currency, 12000),
+             level = GREATEST(COALESCE(level, 1), 10),
+             xp = GREATEST(COALESCE(xp, 0), 1500)
+           WHERE username = $1`, [visitorId])
+        await db.query(
+          `UPDATE guardians SET
+             atk = GREATEST(atk, 200), def = GREATEST(def, 180), hp = GREATEST(hp, 1200),
+             abs = GREATEST(abs, 50),  prd = GREATEST(prd, 150), spd = GREATEST(spd, 60),
+             rng = GREATEST(rng, 80),  ter = GREATEST(ter, 80)
+           WHERE user_id = (SELECT id FROM users WHERE username = $1)`, [visitorId])
+      } catch (e) { /* 첫 호출은 user 없을 수 있음 — 무시 */ }
+    }
+
     const result = await db.query(
       `SELECT g.*, u.id as user_id, u.energy_currency, u.user_layer, u.battle_wins, u.graduated_at
        FROM guardians g
