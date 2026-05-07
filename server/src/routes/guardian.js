@@ -37,11 +37,11 @@ router.post('/create', async (req, res) => {
     if (userResult.rows.length === 0) {
       // 새 사용자 생성
       const newUser = await db.query(
-        // R) 베타 테스트 — 신규 유저에게 풍부한 시작 자원
-        //   energy 5000: Lv1 cap 6000의 83%, 50m 타워 5~6개 + 100m 1~2개 가능
-        //   level 3: 클래스 해금 generic+balista+assault 3종 즉시 사용
-        //   xp 200: 다음 레벨업까지 약간 여유
-        'INSERT INTO users (username, energy_currency, level, xp) VALUES ($1, 5000, 3, 200) RETURNING id',
+        // R) 베타 풍부 시작 자원 (v2)
+        //   energy 12000 = Lv10 cap 15000의 80% — 큰 타워 여러 개 가능
+        //   level 10 → cap maxRadius~390m, 면적 예산 ~2배, 클래스 8종 해금
+        //   xp 1500 — Lv11 진입 직전 (다음 보상까지 짧은 거리)
+        'INSERT INTO users (username, energy_currency, level, xp) VALUES ($1, 12000, 10, 1500) RETURNING id',
         [visitorId]
       )
       userId = newUser.rows[0].id
@@ -59,12 +59,12 @@ router.post('/create', async (req, res) => {
       return res.status(400).json({ success: false, error: '이미 수호신이 있습니다' })
     }
 
-    // R) 베타 테스트 — 모든 타입 기본 스탯 ~2배 상향 (cap 내)
-    //    이전 baseline은 Lv1 첫 영역 만들고 NPC 한두 번 잡으면 끝나는 수준 → 콘텐츠 체험 부족
+    // R) 베타 — 능력치 풍부 (v2). cap 안 넘는 선에서 최대.
+    //    캡: ATK 500 / DEF 500 / HP 2000 / ABS 80
     const baseStats = {
-      animal:   { atk: 60, def: 50, hp: 400, abs: 30, prd: 60, spd: 30, rng: 30, ter: 30 },
-      robot:    { atk: 70, def: 80, hp: 500, abs: 25, prd: 50, spd: 20, rng: 30, ter: 30 },
-      aircraft: { atk: 65, def: 50, hp: 350, abs: 28, prd: 70, spd: 35, rng: 50, ter: 40 }
+      animal:   { atk: 200, def: 180, hp: 1200, abs: 50, prd: 150, spd: 60, rng: 80, ter: 80 },
+      robot:    { atk: 220, def: 250, hp: 1500, abs: 45, prd: 130, spd: 40, rng: 80, ter: 80 },
+      aircraft: { atk: 200, def: 150, hp: 1000, abs: 50, prd: 170, spd: 80, rng: 120, ter: 100 }
     }
 
     const stats = baseStats[type] || baseStats.animal
