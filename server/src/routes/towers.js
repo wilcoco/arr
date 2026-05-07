@@ -283,6 +283,100 @@ async function processTowerDamage(userId, lat, lng) {
   return { strikes, totalDmg }
 }
 
+// 디버그: 기존 사용자 영역 근처에 랜덤 NPC 타워 다수 spawn (베타 콘텐츠 채우기)
+//   POST /api/towers/debug-spawn-random { secret, perUser?, maxTotal?, distMin?, distMax? }
+//   각 비-NPC 사용자 영역마다 perUser개(기본 2) NPC 영역+타워 spawn
+//   distMin~distMax 범위 무작위 거리 (기본 80~250m), 13종 클래스 + 1~3 티어 랜덤
+router.post('/debug-spawn-random', async (req, res) => {
+  try {
+    const { secret } = req.body
+    if (secret !== 'guardian-test') return res.status(403).json({ success: false, error: 'forbidden' })
+    const perUser  = Math.min(Math.max(parseInt(req.body.perUser)  || 2, 1), 5)
+    const maxTotal = Math.min(Math.max(parseInt(req.body.maxTotal) || 30, 1), 100)
+    const distMin  = Math.max(parseInt(req.body.distMin) || 80,  30)
+    const distMax  = Math.max(parseInt(req.body.distMax) || 250, distMin + 10)
+
+    // 비-NPC 사용자의 영역 모두 가져오기
+    const seedTerr = await db.query(
+      `SELECT t.id, t.center_lat, t.center_lng, t.radius, u.id AS owner_id, u.username
+       FROM territories t JOIN users u ON t.user_id = u.id
+       WHERE u.username NOT LIKE 'NPC_%'
+       LIMIT 200`
+    )
+    if (seedTerr.rows.length === 0) {
+      return res.json({ success: true, spawned: 0, note: '비-NPC 영역 없음 — 먼저 사용자가 영역 만들 것' })
+    }
+
+    const allClasses = Object.keys(TOWER_CLASSES)
+    const spawned = []
+    let count = 0
+
+    for (const seed of seedTerr.rows) {
+      if (count >= maxTotal) break
+      for (let i = 0; i < perUser; i++) {
+        if (count >= maxTotal) break
+        const seedLat = parseFloat(seed.center_lat)
+        const seedLng = parseFloat(seed.center_lng)
+        const dist = distMin + Math.random() * (distMax - distMin)
+        const angle = Math.random() * 2 * Math.PI
+        const cosLat = Math.max(0.1, Math.cos(seedLat * Math.PI / 180))
+        const npcLat = seedLat + (dist * Math.cos(angle)) / 111000
+        const npcLng = seedLng + (dist * Math.sin(angle)) / (111000 * cosLat)
+        const cls = allClasses[Math.floor(Math.random() * allClasses.length)]
+        const tier = 1 + Math.floor(Math.random() * 3)  // 1~3 (5는 너무 셈)
+        const radius = 50 + Math.floor(Math.random() * 100)  // 50~150m
+
+        try {
+          const npcName = 'NPC_' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 10000) + '_' + i
+          const u = await db.query(
+            `INSERT INTO users (username, energy_currency, level, xp, user_layer)
+             VALUES ($1, 5000, 5, 1000, 'beginner') RETURNING id`,
+            [npcName]
+          )
+          const npcId = u.rows[0].id
+          await db.query(
+            `INSERT INTO guardians (user_id, type, atk, def, hp, abs, prd, spd, rng, ter)
+             VALUES ($1, $2, 80, 70, 500, 20, 50, 25, 40, 40)`,
+            [npcId, ['animal','robot','aircraft'][Math.floor(Math.random()*3)]]
+          )
+          const stats = towerStats(cls, tier)
+          const t = await db.query(
+            `INSERT INTO territories (user_id, center_lat, center_lng, radius, tower_type)
+             VALUES ($1, $2, $3, $4, 'normal') RETURNING id`,
+            [npcId, npcLat, npcLng, radius]
+          )
+          await db.query(
+            `INSERT INTO fixed_guardians (user_id, territory_id, guardian_type, tower_class, tier,
+                                           tower_range, fire_rate_ms, atk, def, hp, max_hp,
+                                           position_lat, position_lng)
+             VALUES ($1, $2, 'defense', $3, $4, $5, $6, $7, $8, $9, $9, $10, $11)`,
+            [npcId, t.rows[0].id, cls, tier, stats.range, stats.fireRateMs,
+             stats.damage, Math.round(stats.damage * 0.5), stats.hp, npcLat, npcLng]
+          )
+          spawned.push({
+            owner: npcName, ownerOf: seed.username,
+            class: cls, tier, radius,
+            center: { lat: npcLat, lng: npcLng },
+            distFromSeed: Math.round(dist)
+          })
+          count++
+        } catch (e) {
+          console.error('[debug-spawn-random] inner error:', e.message)
+        }
+      }
+    }
+    res.json({
+      success: true,
+      spawned: count,
+      seedTerritories: seedTerr.rows.length,
+      perUser, distRange: [distMin, distMax],
+      towers: spawned
+    })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
 // GET /api/towers/classes  — 클라이언트 메타데이터
 router.get('/classes', (req, res) => {
   const out = {}
