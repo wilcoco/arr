@@ -338,6 +338,35 @@ export const useGameStore = create((set, get) => ({
 
   setSelectedTowerClass: (cls) => set({ selectedTowerClass: cls }),
 
+  // W) 맵 클릭 좌표에 직접 타워 배치 — 자기 GPS 위치와 무관한 임의 좌표
+  placeAtCoord: async (lat, lng, towerClass = 'cannon', tier = 2, claimRadiusM = 100) => {
+    const { userId, showToast } = get()
+    if (!userId) { showToast('로그인 필요', 'error'); return { success: false } }
+    try {
+      const res = await fetch(`${API_URL}/api/towers/place`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, lat, lng, towerClass, tier, claimRadiusM })
+      })
+      const data = await res.json()
+      if (data.success) {
+        set(state => ({
+          territories: [...state.territories, {
+            id: data.territory.id, userId: data.territory.userId,
+            center: { lat: data.territory.center.lat, lng: data.territory.center.lng },
+            radius: data.territory.radius,
+            parentTerritoryId: data.territory.parentTerritoryId,
+            isOwn: true
+          }],
+          myFixedGuardians: [...state.myFixedGuardians, data.tower]
+        }))
+        showToast(`🏰 ${towerClass} L${tier} 배치 (${lat.toFixed(5)}, ${lng.toFixed(5)})`, 'success')
+        get().loadUserData()
+      } else showToast(`❌ ${data.error || '배치 실패'}`, 'error')
+      return data
+    } catch (e) { showToast(e.message, 'error'); return { success: false } }
+  },
+
   fetchTowerClasses: async () => {
     if (get().towerClasses) return get().towerClasses
     try {

@@ -230,6 +230,17 @@ function TeleportClickHandler({ enabled, onTeleport }) {
   return null
 }
 
+// W) 맵 GPS 배치 모드 — 클릭 좌표에 타워 배치
+function MapPlaceClickHandler({ enabled, onPlace }) {
+  useMapEvents({
+    click(e) {
+      if (!enabled) return
+      onPlace(e.latlng.lat, e.latlng.lng)
+    }
+  })
+  return null
+}
+
 export default function App() {
   const [mapCenter, setMapCenter] = useState([37.5, 127.0])
   const [locationRequested, setLocationRequested] = useState(false)
@@ -283,6 +294,10 @@ export default function App() {
   const [activeGrant, setActiveGrant] = useState(null) // 발판 건설용 grant
   const [showFieldMode, setShowFieldMode] = useState(false) // 웹 AR(야전) 모드
   const [teleportMode, setTeleportMode] = useState(false) // 디버그: 맵 클릭 = 위치 텔레포트
+  const [mapPlaceMode, setMapPlaceMode] = useState(false) // W) 맵 클릭 = 그 좌표에 타워 배치
+  const [mapPlaceClass, setMapPlaceClass] = useState('cannon') // 배치 시 사용할 클래스
+  const [mapPlaceTier, setMapPlaceTier] = useState(2)
+  const [mapPlaceRadius, setMapPlaceRadius] = useState(100)
   const [gpsLocked, setGpsLocked] = useState(false) // 텔레포트 후 GPS가 덮어쓰는 것 방지
   const gpsLockedRef = useRef(false) // watchPosition 콜백에서 최신값 읽기 위한 ref
   const slotGrants = useGameStore(s => s.slotGrants)
@@ -615,6 +630,11 @@ export default function App() {
           setTeleportMode(false)
         }} />
 
+        <MapPlaceClickHandler enabled={mapPlaceMode} onPlace={async (lat, lng) => {
+          await useGameStore.getState().placeAtCoord(lat, lng, mapPlaceClass, mapPlaceTier, mapPlaceRadius)
+          // 모드는 유지 — 연속 배치 가능. 끄려면 토글 다시.
+        }} />
+
         {/* 진영(formation) 오버레이 — 연결선 / 호구(atari) / 눈 영역 */}
         {formationData && (() => {
           const tById = Object.fromEntries((formationData.territories || []).map(t => [t.id, t]))
@@ -930,6 +950,51 @@ export default function App() {
         >
           🚩 {teleportMode ? '점프: 맵을 탭' : '위치 점프'}
         </button>
+      )}
+
+      {/* W) 맵 GPS 배치 모드 — 토글 + 클래스/티어/반경 미니 컨트롤 */}
+      {guardian && userLocation && (
+        <div style={{
+          position: 'fixed', left: 12, bottom: 130, zIndex: 1000,
+          display: 'flex', flexDirection: 'column', gap: 4,
+          background: 'rgba(20,20,30,0.92)', padding: 8, borderRadius: 8,
+          border: mapPlaceMode ? '2px solid #ffaa00' : '1px solid #444'
+        }}>
+          <button
+            onClick={() => { setMapPlaceMode(!mapPlaceMode); if (!mapPlaceMode) setTeleportMode(false) }}
+            style={{
+              padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
+              background: mapPlaceMode ? '#ffaa00' : '#555',
+              color: mapPlaceMode ? '#000' : '#ddd', fontWeight: 'bold', fontSize: 12
+            }}
+            title="ON 시 맵 탭하면 그 좌표에 타워 배치"
+          >
+            🏰 {mapPlaceMode ? '배치: 맵을 탭' : 'GPS 배치'}
+          </button>
+          {mapPlaceMode && (
+            <>
+              <select value={mapPlaceClass} onChange={e => setMapPlaceClass(e.target.value)}
+                style={{ fontSize: 11, padding: 2 }}>
+                {['generic','balista','cannon','assault','scifi','fire','ice',
+                  'aqua','electric','nature','venom','arcane','crystal'].map(c =>
+                  <option key={c} value={c}>{c}</option>
+                )}
+              </select>
+              <label style={{ fontSize: 10, color: '#aaa' }}>
+                Tier {mapPlaceTier}
+                <input type="range" min="1" max="5" value={mapPlaceTier}
+                  onChange={e => setMapPlaceTier(parseInt(e.target.value))}
+                  style={{ width: 100, marginLeft: 4 }} />
+              </label>
+              <label style={{ fontSize: 10, color: '#aaa' }}>
+                반경 {mapPlaceRadius}m
+                <input type="range" min="50" max="500" step="10" value={mapPlaceRadius}
+                  onChange={e => setMapPlaceRadius(parseInt(e.target.value))}
+                  style={{ width: 100, marginLeft: 4 }} />
+              </label>
+            </>
+          )}
+        </div>
       )}
 
       {/* GPS 잠금 토글 — 실제 GPS 무시하고 텔레포트 위치 유지 */}
