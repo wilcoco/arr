@@ -386,13 +386,13 @@ router.get('/classes', (req, res) => {
   res.json({ classes: out })
 })
 
+// V) 베타 무제한 모드 — true이면 모든 거부 분기 우회 + 비용 0
+//   - cap 초과는 자동 클램프
+//   - 면적 예산 / 개수 / soft overlap / 에너지 부족 / 남의 영역 충돌 모두 skip
+//   - 운영 전환 시 false로 변경
+const BETA_NO_LIMITS = true
+
 // POST /api/towers/place — 새 타워 배치 (β 모델: 1 타워 = 1 영역)
-//   body: { userId, lat, lng, towerClass, claimRadiusM, tier?, grantId?, vassalContractId? }
-//   - claimRadiusM 검증: 사용자 레벨 cap, 면적 예산, 타워 개수 cap
-//   - 위치 (lat, lng) 가 다른 영역 안에 있는지 검사:
-//       자기 영역 안 → 자기-속국 (parent_territory_id 자동 설정, 계약 불필요)
-//       남의 영역 안 → vassalContractId 있으면 활성화, grantId 있으면 발판, 둘 다 없으면 거부
-//   - atomic: territories INSERT → fixed_guardians INSERT (territory_id 바인딩) → 비용 차감
 router.post('/place', async (req, res) => {
   const client = await db.pool.connect().catch(() => null)
   if (!client) return res.status(500).json({ success: false, error: 'DB 연결 실패' })
@@ -426,8 +426,11 @@ router.post('/place', async (req, res) => {
     const energy = parseInt(uRes.rows[0].energy_currency) || 0
     const cap = levelTable.maxRadiusM(userLevel)
     if (claimRadiusM > cap) {
-      await client.query('ROLLBACK')
-      return res.json({ success: false, error: `Lv${userLevel}는 최대 반경 ${cap}m (요청 ${claimRadiusM}m)` })
+      if (BETA_NO_LIMITS) { claimRadiusM = cap }  // 베타: 자동 클램프
+      else {
+        await client.query('ROLLBACK')
+        return res.json({ success: false, error: `Lv${userLevel}는 최대 반경 ${cap}m (요청 ${claimRadiusM}m)` })
+      }
     }
     if (claimRadiusM < levelTable.MIN_RADIUS_M) claimRadiusM = levelTable.MIN_RADIUS_M
 
@@ -437,7 +440,7 @@ router.post('/place', async (req, res) => {
     )
     const towerCount = parseInt(tcountRes.rows[0].n) || 0
     const towerCap = levelTable.maxTowerCount(userLevel)
-    if (towerCount >= towerCap) {
+    if (towerCount >= towerCap && !BETA_NO_LIMITS) {
       await client.query('ROLLBACK')
       return res.json({ success: false, error: `Lv${userLevel} 최대 ${towerCap}개 영역 (현재 ${towerCount}개)` })
     }
@@ -449,7 +452,7 @@ router.post('/place', async (req, res) => {
     const usedArea = parseFloat(areaRes.rows[0].used) || 0
     const newArea = Math.PI * claimRadiusM * claimRadiusM
     const budget = levelTable.maxTotalAreaM2(userLevel)
-    if (usedArea + newArea > budget) {
+    if (usedArea + newArea > budget && !BETA_NO_LIMITS) {
       await client.query('ROLLBACK')
       return res.json({
         success: false,
@@ -488,6 +491,9 @@ router.post('/place', async (req, res) => {
       const isOwn = host.user_id === userId
       if (isOwn) {
         parentTerritoryId = host.id
+      } else if (BETA_NO_LIMITS) {
+        // V) 베타: 남의 영역 안에도 무조건 허용 (parent 미설정, 일반 영역으로)
+        parentTerritoryId = null
       } else {
         if (!grantId) {
           await client.query('ROLLBACK')
@@ -535,7 +541,7 @@ router.post('/place', async (req, res) => {
         const ov = circleOverlapPct(d, parseFloat(c.radius), claimRadiusM)
         if (ov > maxOverlap) maxOverlap = ov
       }
-      if (maxOverlap > 0.20) {
+      if (maxOverlap > 0.20 && !BETA_NO_LIMITS) {
         await client.query('ROLLBACK')
         return res.json({
           success: false,
@@ -549,9 +555,10 @@ router.post('/place', async (req, res) => {
     const tierNum = parseInt(tier) || 1
     const stats = towerStats(towerClass, tierNum)
 
-    // 비용 — foothold는 무료(격파로 이미 대가 지불), 일반/자기영역은 차감
+    // 비용 — foothold는 무료, 일반/자기영역은 차감.
+    // V) BETA_NO_LIMITS이면 비용 0E로 강제 (사용자 자원 무관 무조건 성공)
     let costPaid = 0
-    if (!isFoothold) {
+    if (!isFoothold && !BETA_NO_LIMITS) {
       costPaid = levelTable.placementCostEnergy(claimRadiusM, stats.cost)
       if (energy < costPaid) {
         await client.query('ROLLBACK')
