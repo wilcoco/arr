@@ -432,7 +432,10 @@ router.post('/place', async (req, res) => {
         return res.json({ success: false, error: `Lv${userLevel}는 최대 반경 ${cap}m (요청 ${claimRadiusM}m)` })
       }
     }
-    if (claimRadiusM < levelTable.MIN_RADIUS_M) claimRadiusM = levelTable.MIN_RADIUS_M
+    // 베타: 작은 반경(10~50m) 허용 — 사용자가 영역 안에 갇히지 않도록.
+    // 운영: MIN_RADIUS_M(50m) 강제.
+    const minR = BETA_NO_LIMITS ? 5 : levelTable.MIN_RADIUS_M
+    if (claimRadiusM < minR) claimRadiusM = minR
 
     // 타워 개수 cap
     const tcountRes = await client.query(
